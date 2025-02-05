@@ -29,6 +29,7 @@ img_data_dir = '<path_to_data>/CheXpert-v1.0/'
 
 
 class CheXpertDataset(Dataset):
+
     def __init__(self, csv_file_img, image_size, augmentation=False, pseudo_rgb = True):
         self.data = pd.read_csv(csv_file_img)
         self.image_size = image_size
@@ -49,7 +50,8 @@ class CheXpertDataset(Dataset):
             'Pleural Effusion',
             'Pleural Other',
             'Fracture',
-            'Support Devices']
+            'Support Devices',
+        ]
 
         self.augment = T.Compose([
             T.RandomHorizontalFlip(p=0.5),
@@ -96,6 +98,7 @@ class CheXpertDataset(Dataset):
 
 
 class CheXpertDataModule(pl.LightningDataModule):
+
     def __init__(self, csv_train_img, csv_val_img, csv_test_img, image_size, pseudo_rgb, batch_size, num_workers):
         super().__init__()
         self.csv_train_img = csv_train_img
@@ -124,6 +127,7 @@ class CheXpertDataModule(pl.LightningDataModule):
 
 
 class ResNet(pl.LightningModule):
+
     def __init__(self, num_classes_disease, num_classes_sex, num_classes_race, class_weights_race):
         super().__init__()
         self.num_classes_disease = num_classes_disease
@@ -189,6 +193,7 @@ class ResNet(pl.LightningModule):
 
 
 class DenseNet(pl.LightningModule):
+
     def __init__(self, num_classes_disease, num_classes_sex, num_classes_race, class_weights_race):
         super().__init__()
         self.num_classes_disease = num_classes_disease
@@ -349,18 +354,19 @@ def embeddings(model, data_loader, device):
 
 
 def main(hparams):
-
     # sets seeds for numpy, torch, python.random and PYTHONHASHSEED.
     pl.seed_everything(42, workers=True)
 
     # data
-    data = CheXpertDataModule(csv_train_img='../datafiles/chexpert/chexpert.sample.train.csv',
-                              csv_val_img='../datafiles/chexpert/chexpert.sample.val.csv',
-                              csv_test_img='../datafiles/chexpert/chexpert.sample.test.csv',
-                              image_size=image_size,
-                              pseudo_rgb=True,
-                              batch_size=batch_size,
-                              num_workers=num_workers)
+    data = CheXpertDataModule(
+        csv_train_img='../datafiles/chexpert/chexpert.sample.train.csv',
+        csv_val_img='../datafiles/chexpert/chexpert.sample.val.csv',
+        csv_test_img='../datafiles/chexpert/chexpert.sample.test.csv',
+        image_size=image_size,
+        pseudo_rgb=True,
+        batch_size=batch_size,
+        num_workers=num_workers,
+    )
 
     # model
     model_type = DenseNet
@@ -471,7 +477,7 @@ def main(hparams):
     df.to_csv(os.path.join(out_dir, 'embeddings.test.csv'), index=False)
 
 
-if __name__ == '__main__':
+def cli():
     parser = ArgumentParser()
     parser.add_argument('--gpus', default=1)
     parser.add_argument('--dev', default=0)
