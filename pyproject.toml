@@ -5,10 +5,12 @@ description = ""
 authors = ["Avinash Kori", "Rajat Rasal"]  # equal contributions
 readme = "README.md"
 packages = [
-    { include = "prediction" }
+    { include = "prediction" },
+    { include = "datafiles" }
 ]
 
 [tool.poetry.scripts]
+setup_data = "datafiles.setup_data:main"
 chexpert_train = "prediction.chexpert_multitask:cli"
 
 [tool.poetry.dependencies]
@@ -25,6 +27,8 @@ scikit-image = "0.25.1"
 tensorboard = "2.17.0"
 jupyter = "1.1.1"
 seaborn = "0.13.2"
+openpyxl = "3.1.5"
+python-dotenv = "1.0.1"
 
 [tool.poetry.group.gpu]
 optional = true

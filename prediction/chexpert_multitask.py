@@ -9,6 +9,7 @@ import torchvision
 import torchvision.transforms as T
 from torchvision import models
 import pytorch_lightning as pl
+from dotenv import load_dotenv
 
 from pytorch_lightning.loggers import TensorBoardLogger
 from pytorch_lightning.callbacks import ModelCheckpoint
@@ -17,20 +18,22 @@ from skimage.io import imsave
 from tqdm import tqdm
 from argparse import ArgumentParser
 
+load_dotenv()
+
 image_size = (224, 224)
 num_classes_disease = 14
 num_classes_sex = 2
 num_classes_race = 3
-class_weights_race = (1.0, 1.0, 1.0) # can be changed to balance accuracy
+class_weights_race = (1.0, 1.0, 1.0)  # can be changed to balance accuracy
 batch_size = 150
 epochs = 20
 num_workers = 4
-img_data_dir = '<path_to_data>/CheXpert-v1.0/'
+img_data_dir = os.getenv("CHEXPERT_FOLDER")  # '<path_to_data>/CheXpert-v1.0/'
 
 
 class CheXpertDataset(Dataset):
 
-    def __init__(self, csv_file_img, image_size, augmentation=False, pseudo_rgb = True):
+    def __init__(self, csv_file_img, image_size, augmentation=False, pseudo_rgb=True):
         self.data = pd.read_csv(csv_file_img)
         self.image_size = image_size
         self.do_augment = augmentation
@@ -196,6 +199,8 @@ class DenseNet(pl.LightningModule):
 
     def __init__(self, num_classes_disease, num_classes_sex, num_classes_race, class_weights_race):
         super().__init__()
+        self.automatic_optimization = False
+
         self.num_classes_disease = num_classes_disease
         self.num_classes_sex = num_classes_sex
         self.num_classes_race = num_classes_race
@@ -216,14 +221,18 @@ class DenseNet(pl.LightningModule):
         return out_disease, out_sex, out_race
 
     def configure_optimizers(self):
-        params_backbone = list(self.backbone.parameters())
-        params_disease = params_backbone + list(self.fc_disease.parameters())
-        params_sex = params_backbone + list(self.fc_sex.parameters())
-        params_race = params_backbone + list(self.fc_race.parameters())
-        optim_disease = torch.optim.Adam(params_disease, lr=0.001)
-        optim_sex = torch.optim.Adam(params_sex, lr=0.001)
-        optim_race = torch.optim.Adam(params_race, lr=0.001)
-        return optim_disease, optim_sex, optim_race
+        # params_backbone = list(self.backbone.parameters())
+        # params_disease = params_backbone + list(self.fc_disease.parameters())
+        # params_sex = params_backbone + list(self.fc_sex.parameters())
+        # params_race = params_backbone + list(self.fc_race.parameters())
+        # optim_disease = torch.optim.Adam(params_disease, lr=0.001)
+        # optim_sex = torch.optim.Adam(params_sex, lr=0.001)
+        # optim_race = torch.optim.Adam(params_race, lr=0.001)
+        optim_backbone = torch.optim.Adam(self.backbone.parameters(), lr=0.001)
+        optim_disease = torch.optim.Adam(self.fc_disease.parameters(), lr=0.001)
+        optim_sex = torch.optim.Adam(self.fc_sex.parameters(), lr=0.001)
+        optim_race = torch.optim.Adam(self.fc_race.parameters(), lr=0.001)
+        return [optim_backbone, optim_disease, optim_sex, optim_race]
 
     def unpack_batch(self, batch):
         return batch['image'], batch['label_disease'], batch['label_sex'], batch['label_race']
@@ -237,26 +246,46 @@ class DenseNet(pl.LightningModule):
         return loss_disease, loss_sex, loss_race
 
     # for multiple optimizers
-    def training_step(self, batch, batch_idx, optimizer_idx):
+    def training_step(self, batch, batch_idx):
+        optim_backbone, optim_disease, optim_sex, optim_race = self.optimizers()
+        optim_backbone.zero_grad()
+        optim_disease.zero_grad()
+        optim_sex.zero_grad()
+        optim_race.zero_grad()
+
         loss_disease, loss_sex, loss_race = self.process_batch(batch)
-        self.log_dict({"train_loss_disease": loss_disease, "train_loss_sex": loss_sex, "train_loss_race": loss_race})
+        self.log_dict({
+            "train_loss_disease": loss_disease,
+            "train_loss_sex": loss_sex,
+            "train_loss_race": loss_race,
+        })
         grid = torchvision.utils.make_grid(batch['image'][0:4, ...], nrow=2, normalize=True)
         self.logger.experiment.add_image('images', grid, self.global_step)
 
-        if optimizer_idx == 0:
-            return loss_disease
-        if optimizer_idx == 1:
-            return loss_sex
-        if optimizer_idx == 2:
-            return loss_race
+        self.manual_backward(loss_disease, retain_graph=True)
+        self.manual_backward(loss_sex, retain_graph=True)
+        self.manual_backward(loss_race)
+
+        optim_backbone.step()
+        optim_disease.step()
+        optim_sex.step()
+        optim_race.step()
 
     def validation_step(self, batch, batch_idx):
         loss_disease, loss_sex, loss_race = self.process_batch(batch)
-        self.log_dict({"val_loss_disease": loss_disease, "val_loss_sex": loss_sex, "val_loss_race": loss_race})
+        self.log_dict({
+            "val_loss_disease": loss_disease,
+            "val_loss_sex": loss_sex,
+            "val_loss_race": loss_race,
+        })
 
     def test_step(self, batch, batch_idx):
         loss_disease, loss_sex, loss_race = self.process_batch(batch)
-        self.log_dict({"test_loss_disease": loss_disease, "test_loss_sex": loss_sex, "test_loss_race": loss_race})
+        self.log_dict({
+            "test_loss_disease": loss_disease,
+            "test_loss_sex": loss_sex,
+            "test_loss_race": loss_race,
+        })
 
 
 def test(model, data_loader, device):
@@ -359,9 +388,9 @@ def main(hparams):
 
     # data
     data = CheXpertDataModule(
-        csv_train_img='../datafiles/chexpert/chexpert.sample.train.csv',
-        csv_val_img='../datafiles/chexpert/chexpert.sample.val.csv',
-        csv_test_img='../datafiles/chexpert/chexpert.sample.test.csv',
+        csv_train_img='datafiles/chexpert/chexpert.sample.train.csv',
+        csv_val_img='datafiles/chexpert/chexpert.sample.val.csv',
+        csv_test_img='datafiles/chexpert/chexpert.sample.test.csv',
         image_size=image_size,
         pseudo_rgb=True,
         batch_size=batch_size,
@@ -391,9 +420,9 @@ def main(hparams):
     # train
     trainer = pl.Trainer(
         callbacks=[checkpoint_callback],
-        log_every_n_steps = 5,
+        log_every_n_steps=5,
         max_epochs=epochs,
-        gpus=hparams.gpus,
+        devices=hparams.gpus,
         logger=TensorBoardLogger('chexpert/multitask', name=out_name),
     )
     trainer.logger._default_hp_metric = False
