@@ -141,13 +141,12 @@ def get_boostrap_ci_for_full_experiment(
     }
 
 
-if __name__ == "__main__":
-
+def main():
     # PATH TO PREDICTION AND DATA CHARACTERISTICS FILE
     cnn_pred = pd.read_csv(
-        "../prediction/chexpert/disease/densenet-all/predictions.test.csv"
+        "chexpert/multitask/densenet-all/predictions.test.disease.csv"
     )
-    data_characteristics = pd.read_csv("../datafiles/chexpert/chexpert.sample.test.csv")
+    data_characteristics = pd.read_csv("datafiles/chexpert/chexpert.sample.test.csv")
 
     # PARAMETERS FOR CI
     n_bootstrap = 2000

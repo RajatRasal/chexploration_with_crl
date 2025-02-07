@@ -10,6 +10,7 @@ import torchvision.transforms as T
 from torchvision import models
 import pytorch_lightning as pl
 from dotenv import load_dotenv
+from stocaching import SharedCache
 
 from pytorch_lightning.loggers import TensorBoardLogger
 from pytorch_lightning.callbacks import ModelCheckpoint
@@ -30,7 +31,7 @@ class_weights_race = (1.0, 1.0, 1.0)  # can be changed to balance accuracy
 batch_size = 32
 epochs = 20
 num_workers = 4
-img_data_dir = os.getenv("CHEXPERT_FOLDER")  # '<path_to_data>/CheXpert-v1.0/'
+img_data_dir = os.getenv("CHEXPERT_FOLDER")
 
 
 class CheXpertDataset(Dataset):
@@ -38,6 +39,7 @@ class CheXpertDataset(Dataset):
     def __init__(self, csv_file_img, image_size, 
                 augmentation = False, 
                 pseudo_rgb = True,
+                cache_size=0,
                 nsamples = 2,
                 invariant_sampling = False):
         self.data = pd.read_csv(csv_file_img)
@@ -45,6 +47,7 @@ class CheXpertDataset(Dataset):
         self.do_augment = augmentation
         self.pseudo_rgb = pseudo_rgb
         self.invariant_sampling = invariant_sampling
+        self.use_cache = cache_size > 0
 
         self.labels = [
             'No Finding',
@@ -127,6 +130,8 @@ class CheXpertDataset(Dataset):
                     self.label_list.append(key)
        
 
+        if self.use_cache:
+            self.cache = {}
 
     def __len__(self):
         return len(self.data)
@@ -142,7 +147,7 @@ class CheXpertDataset(Dataset):
         labels_race = []
 
         for sample in samples:
-            image = torch.from_numpy(sample['image']).unsqueeze(0)
+            image = sample['image'].unsqueeze(0)  # torch.from_numpy(sample['image']).unsqueeze(0)
             label_disease = torch.from_numpy(sample['label_disease'])
             label_sex = torch.from_numpy(sample['label_sex'])
             label_race = torch.from_numpy(sample['label_race'])
@@ -171,7 +176,7 @@ class CheXpertDataset(Dataset):
 
     def getitem(self, item):
         sample = self.get_sample(item)
-        image = torch.from_numpy(sample['image']).unsqueeze(0)
+        image = sample['image'].unsqueeze(0)  # torch.from_numpy(sample['image']).unsqueeze(0)
         label_disease = torch.from_numpy(sample['label_disease'])
         label_sex = torch.from_numpy(sample['label_sex'])
         label_race = torch.from_numpy(sample['label_race'])
@@ -197,7 +202,18 @@ class CheXpertDataset(Dataset):
     def get_sample(self, item):
         if not self.invariant_sampling:
             sample = self.samples[item]
-            image = imread(sample['image_path']).astype(np.float32)
+            image = None
+
+            if self.use_cache:
+                if sample['image_path'] in self.cache:
+                    image = self.cache[sample['image_path']]
+
+            
+            if image is None:
+                image = self._read_image(sample['image_path'])
+                if self.use_cache:
+                    self.cache[sample['image_path']] = image
+                
             return {'image': image, 
                         'label_disease': sample['label_disease'], 
                         'label_sex': sample['label_sex'], 
@@ -214,10 +230,22 @@ class CheXpertDataset(Dataset):
         
         info = []
 
+
+
         for si in range(self.nsamples):
             # to enforce invariance in diseases ------
             sample = np.random.choice(self.attribute_wise_samples[sex[si]][race[si]][disease])
-            image = imread(sample['image_path']).astype(np.float32)
+
+            image = None
+            if self.use_cache:
+                if sample['image_path'] in self.cache:
+                    image = self.cache[sample['image_path']]
+            
+            if image is None:
+                image = self._read_image(sample['image_path'])
+                if self.use_cache:
+                    self.cache[sample['image_path']] = image
+                
             info.append(
                         {'image': image, 
                         'label_disease': sample['label_disease'], 
@@ -225,6 +253,10 @@ class CheXpertDataset(Dataset):
                         'label_race': sample['label_race']}
                     )  
         return info
+
+    def _read_image(self, image_path):
+        return torch.from_numpy(imread(image_path).astype(np.float32))
+
 
 
 class CheXpertDataModule(pl.LightningDataModule):
@@ -236,6 +268,7 @@ class CheXpertDataModule(pl.LightningDataModule):
                         pseudo_rgb, 
                         batch_size, 
                         num_workers,  
+                        cache_size=0,
                         nsamples = 2,
                         invariant_sampling = False):
         super().__init__()
@@ -246,12 +279,14 @@ class CheXpertDataModule(pl.LightningDataModule):
         self.batch_size = batch_size
         self.num_workers = num_workers
         self.nsamples = nsamples
+        self.cache_size = cache_size
         self.invariant_sampling = invariant_sampling
 
         self.train_set = CheXpertDataset(self.csv_train_img, 
                                             self.image_size, 
                                             augmentation=True, 
                                             pseudo_rgb=pseudo_rgb,
+                                            cache_size=self.cache_size,
                                             nsamples = self.nsamples,
                                             invariant_sampling = self.invariant_sampling)
 
@@ -382,6 +417,7 @@ class BaseNet(ABC, pl.LightningModule):
         optim_race.step()
 
 
+
     def validation_step(self, batch, batch_idx):
 
         invariant_rep = len(batch['image'].shape) == 5
@@ -433,8 +469,6 @@ class DenseNet(BaseNet):
         self.fc_race = nn.Linear(num_features, self.num_classes_race)
         self.fc_connect = nn.Identity(num_features)
         self.backbone.classifier = self.fc_connect
-
-   
 
 
 
@@ -546,12 +580,18 @@ def main(hparams):
         batch_size=batch_size,
         num_workers=num_workers,
         nsamples = hparams.nsamples,
-        invariant_sampling = hparams.invariant_sampling
+        invariant_sampling = hparams.invariant_sampling,
+        cache_size=32,
     )
 
     # model
     model_type = DenseNet
-    model = model_type(num_classes_disease=num_classes_disease, num_classes_sex=num_classes_sex, num_classes_race=num_classes_race, class_weights_race=class_weights_race)
+    model = model_type(
+        num_classes_disease=num_classes_disease,
+        num_classes_sex=num_classes_sex,
+        num_classes_race=num_classes_race,
+        class_weights_race=class_weights_race,
+    )
 
     # Create output directory
     out_name = 'densenet-all'
@@ -568,7 +608,7 @@ def main(hparams):
 
     for idx in range(0,5):
         sample = data.val_set.get_sample(idx)
-        imsave(os.path.join(temp_dir, 'sample_' + str(idx) + '.jpg'), sample['image'].astype(np.uint8))
+        imsave(os.path.join(temp_dir, 'sample_' + str(idx) + '.jpg'), sample['image'].numpy().astype(np.uint8))
 
     checkpoint_callback = ModelCheckpoint(monitor="val_loss_disease", mode='min')
 
@@ -643,7 +683,6 @@ def main(hparams):
     df.to_csv(os.path.join(out_dir, 'predictions.test.race.csv'), index=False)
 
     print('EMBEDDINGS')
-
     embeds_val, targets_val_disease, targets_val_sex, targets_val_race = embeddings(model, data.val_dataloader(), device)
     df = pd.DataFrame(data=embeds_val)
     df_targets_disease = pd.DataFrame(data=targets_val_disease, columns=cols_names_targets_disease)
