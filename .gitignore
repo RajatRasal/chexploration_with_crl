@@ -4,5 +4,8 @@ datafiles/chexpert/
 datafiles/mimic/
 
 notebooks/.ipynb_checkpoints/
+notebooks/*.png
+notebooks/*.pdf
+notebooks/*.csv
 
 chexpert/

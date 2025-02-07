@@ -10,6 +10,7 @@ import torchvision.transforms as T
 from torchvision import models
 import pytorch_lightning as pl
 from dotenv import load_dotenv
+from stocaching import SharedCache
 
 from pytorch_lightning.loggers import TensorBoardLogger
 from pytorch_lightning.callbacks import ModelCheckpoint
@@ -28,16 +29,17 @@ class_weights_race = (1.0, 1.0, 1.0)  # can be changed to balance accuracy
 batch_size = 150
 epochs = 20
 num_workers = 4
-img_data_dir = os.getenv("CHEXPERT_FOLDER")  # '<path_to_data>/CheXpert-v1.0/'
+img_data_dir = os.getenv("CHEXPERT_FOLDER")
 
 
 class CheXpertDataset(Dataset):
 
-    def __init__(self, csv_file_img, image_size, augmentation=False, pseudo_rgb=True):
+    def __init__(self, csv_file_img, image_size, augmentation=False, pseudo_rgb=True, cache_size=0):
         self.data = pd.read_csv(csv_file_img)
         self.image_size = image_size
         self.do_augment = augmentation
         self.pseudo_rgb = pseudo_rgb
+        self.use_cache = cache_size > 0
 
         self.labels = [
             'No Finding',
@@ -74,13 +76,21 @@ class CheXpertDataset(Dataset):
             sample = {'image_path': img_path, 'label_disease': img_label_disease, 'label_sex': img_label_sex, 'label_race': img_label_race}
             self.samples.append(sample)
 
+        if self.use_cache:
+            self.cache = SharedCache(
+                size_limit_gib=cache_size,
+                dataset_len=len(self.samples),
+                data_dims=self._read_image(self.samples[0]["image_path"]).shape,
+                dtype=torch.float32,
+            )
+
     def __len__(self):
         return len(self.data)
 
     def __getitem__(self, item):
         sample = self.get_sample(item)
 
-        image = torch.from_numpy(sample['image']).unsqueeze(0)
+        image = sample['image'].unsqueeze(0)  # torch.from_numpy(sample['image']).unsqueeze(0)
         label_disease = torch.from_numpy(sample['label_disease'])
         label_sex = torch.from_numpy(sample['label_sex'])
         label_race = torch.from_numpy(sample['label_race'])
@@ -93,16 +103,31 @@ class CheXpertDataset(Dataset):
 
         return {'image': image, 'label_disease': label_disease, 'label_sex': label_sex, 'label_race': label_race}
 
-    def get_sample(self, item):
-        sample = self.samples[item]
-        image = imread(sample['image_path']).astype(np.float32)
+    def _read_image(self, image_path):
+        return torch.from_numpy(imread(image_path).astype(np.float32))
 
-        return {'image': image, 'label_disease': sample['label_disease'], 'label_sex': sample['label_sex'], 'label_race': sample['label_race']}
+    def get_sample(self, item):
+        image = None
+        if self.use_cache:
+            image = self.cache.get_slot(item)
+
+        sample = self.samples[item]
+        if image is None:
+            image = self._read_image(sample['image_path'])
+            if self.use_cache:
+                self.cache.set_slot(item, image, allow_overwrite=True)
+
+        return {
+            'image': image,
+            'label_disease': sample['label_disease'],
+            'label_sex': sample['label_sex'],
+            'label_race': sample['label_race'],
+        }
 
 
 class CheXpertDataModule(pl.LightningDataModule):
 
-    def __init__(self, csv_train_img, csv_val_img, csv_test_img, image_size, pseudo_rgb, batch_size, num_workers):
+    def __init__(self, csv_train_img, csv_val_img, csv_test_img, image_size, pseudo_rgb, batch_size, num_workers, cache_size=0):
         super().__init__()
         self.csv_train_img = csv_train_img
         self.csv_val_img = csv_val_img
@@ -110,8 +135,9 @@ class CheXpertDataModule(pl.LightningDataModule):
         self.image_size = image_size
         self.batch_size = batch_size
         self.num_workers = num_workers
+        self.cache_size = cache_size
 
-        self.train_set = CheXpertDataset(self.csv_train_img, self.image_size, augmentation=True, pseudo_rgb=pseudo_rgb)
+        self.train_set = CheXpertDataset(self.csv_train_img, self.image_size, augmentation=True, pseudo_rgb=pseudo_rgb, cache_size=self.cache_size)
         self.val_set = CheXpertDataset(self.csv_val_img, self.image_size, augmentation=False, pseudo_rgb=pseudo_rgb)
         self.test_set = CheXpertDataset(self.csv_test_img, self.image_size, augmentation=False, pseudo_rgb=pseudo_rgb)
 
@@ -221,18 +247,14 @@ class DenseNet(pl.LightningModule):
         return out_disease, out_sex, out_race
 
     def configure_optimizers(self):
-        # params_backbone = list(self.backbone.parameters())
-        # params_disease = params_backbone + list(self.fc_disease.parameters())
-        # params_sex = params_backbone + list(self.fc_sex.parameters())
-        # params_race = params_backbone + list(self.fc_race.parameters())
-        # optim_disease = torch.optim.Adam(params_disease, lr=0.001)
-        # optim_sex = torch.optim.Adam(params_sex, lr=0.001)
-        # optim_race = torch.optim.Adam(params_race, lr=0.001)
-        optim_backbone = torch.optim.Adam(self.backbone.parameters(), lr=0.001)
-        optim_disease = torch.optim.Adam(self.fc_disease.parameters(), lr=0.001)
-        optim_sex = torch.optim.Adam(self.fc_sex.parameters(), lr=0.001)
-        optim_race = torch.optim.Adam(self.fc_race.parameters(), lr=0.001)
-        return [optim_backbone, optim_disease, optim_sex, optim_race]
+        params_backbone = list(self.backbone.parameters())
+        params_disease = params_backbone + list(self.fc_disease.parameters())
+        params_sex = params_backbone + list(self.fc_sex.parameters())
+        params_race = params_backbone + list(self.fc_race.parameters())
+        optim_disease = torch.optim.Adam(params_disease, lr=0.001)
+        optim_sex = torch.optim.Adam(params_sex, lr=0.001)
+        optim_race = torch.optim.Adam(params_race, lr=0.001)
+        return [optim_disease, optim_sex, optim_race]
 
     def unpack_batch(self, batch):
         return batch['image'], batch['label_disease'], batch['label_sex'], batch['label_race']
@@ -247,29 +269,26 @@ class DenseNet(pl.LightningModule):
 
     # for multiple optimizers
     def training_step(self, batch, batch_idx):
-        optim_backbone, optim_disease, optim_sex, optim_race = self.optimizers()
-        optim_backbone.zero_grad()
-        optim_disease.zero_grad()
-        optim_sex.zero_grad()
-        optim_race.zero_grad()
-
-        loss_disease, loss_sex, loss_race = self.process_batch(batch)
-        self.log_dict({
-            "train_loss_disease": loss_disease,
-            "train_loss_sex": loss_sex,
-            "train_loss_race": loss_race,
-        })
         grid = torchvision.utils.make_grid(batch['image'][0:4, ...], nrow=2, normalize=True)
         self.logger.experiment.add_image('images', grid, self.global_step)
 
-        self.manual_backward(loss_disease, retain_graph=True)
-        self.manual_backward(loss_sex, retain_graph=True)
-        self.manual_backward(loss_race)
+        optims = self.optimizers()
 
-        optim_backbone.step()
-        optim_disease.step()
-        optim_sex.step()
-        optim_race.step()
+        def _update(idx):
+            losses = self.process_batch(batch)
+            self.log_dict({
+                "train_loss_disease": losses[0],
+                "train_loss_sex": losses[1],
+                "train_loss_race": losses[2],
+            })
+            optims[idx].zero_grad()
+            self.manual_backward(losses[idx])
+            optims[idx].step()
+
+        # Update weights w.r.t each loss at each head sepately
+        _update(0)
+        _update(1)
+        _update(2)
 
     def validation_step(self, batch, batch_idx):
         loss_disease, loss_sex, loss_race = self.process_batch(batch)
@@ -395,11 +414,17 @@ def main(hparams):
         pseudo_rgb=True,
         batch_size=batch_size,
         num_workers=num_workers,
+        cache_size=32,
     )
 
     # model
     model_type = DenseNet
-    model = model_type(num_classes_disease=num_classes_disease, num_classes_sex=num_classes_sex, num_classes_race=num_classes_race, class_weights_race=class_weights_race)
+    model = model_type(
+        num_classes_disease=num_classes_disease,
+        num_classes_sex=num_classes_sex,
+        num_classes_race=num_classes_race,
+        class_weights_race=class_weights_race,
+    )
 
     # Create output directory
     out_name = 'densenet-all'
@@ -411,9 +436,9 @@ def main(hparams):
     if not os.path.exists(temp_dir):
         os.makedirs(temp_dir)
 
-    for idx in range(0,5):
+    for idx in range(0, 5):
         sample = data.train_set.get_sample(idx)
-        imsave(os.path.join(temp_dir, 'sample_' + str(idx) + '.jpg'), sample['image'].astype(np.uint8))
+        imsave(os.path.join(temp_dir, 'sample_' + str(idx) + '.jpg'), sample['image'].numpy().astype(np.uint8))
 
     checkpoint_callback = ModelCheckpoint(monitor="val_loss_disease", mode='min')
 
@@ -488,7 +513,6 @@ def main(hparams):
     df.to_csv(os.path.join(out_dir, 'predictions.test.race.csv'), index=False)
 
     print('EMBEDDINGS')
-
     embeds_val, targets_val_disease, targets_val_sex, targets_val_race = embeddings(model, data.val_dataloader(), device)
     df = pd.DataFrame(data=embeds_val)
     df_targets_disease = pd.DataFrame(data=targets_val_disease, columns=cols_names_targets_disease)
