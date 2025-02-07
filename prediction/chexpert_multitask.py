@@ -18,6 +18,8 @@ from skimage.io import imsave
 from tqdm import tqdm
 from argparse import ArgumentParser
 
+from abc import ABC
+
 load_dotenv()
 
 image_size = (224, 224)
@@ -25,7 +27,7 @@ num_classes_disease = 14
 num_classes_sex = 2
 num_classes_race = 3
 class_weights_race = (1.0, 1.0, 1.0)  # can be changed to balance accuracy
-batch_size = 150
+batch_size = 32
 epochs = 20
 num_workers = 4
 img_data_dir = os.getenv("CHEXPERT_FOLDER")  # '<path_to_data>/CheXpert-v1.0/'
@@ -33,11 +35,16 @@ img_data_dir = os.getenv("CHEXPERT_FOLDER")  # '<path_to_data>/CheXpert-v1.0/'
 
 class CheXpertDataset(Dataset):
 
-    def __init__(self, csv_file_img, image_size, augmentation=False, pseudo_rgb=True):
+    def __init__(self, csv_file_img, image_size, 
+                augmentation = False, 
+                pseudo_rgb = True,
+                nsamples = 2,
+                invariant_sampling = False):
         self.data = pd.read_csv(csv_file_img)
         self.image_size = image_size
         self.do_augment = augmentation
         self.pseudo_rgb = pseudo_rgb
+        self.invariant_sampling = invariant_sampling
 
         self.labels = [
             'No Finding',
@@ -61,6 +68,38 @@ class CheXpertDataset(Dataset):
             T.RandomApply(transforms=[T.RandomAffine(degrees=15, scale=(0.9, 1.1))], p=0.5),
         ])
 
+
+        if self.invariant_sampling:
+
+            protected_sex_attributes  = np.unique(self.data['sex_label'].values)
+            protected_race_attributes = np.unique(self.data['race_label'].values)
+            self.attribute_wise_samples = {}
+
+            protected_sex_counts = np.zeros_like(protected_sex_attributes)
+            protected_race_counts = np.zeros_like(protected_race_attributes)
+
+            for i, sex in enumerate(protected_sex_attributes):
+                self.attribute_wise_samples[sex] = {}
+                protected_sex_counts[i] = np.sum(1. * (self.data['sex_label'].values == sex))
+
+                for i, race in enumerate(protected_race_attributes):
+                    self.attribute_wise_samples[sex][race] = {}
+                    protected_race_counts[i] = np.sum(1. * (self.data['race_label'].values == race))
+
+
+            protected_sex_counts = np.array(protected_sex_counts)
+            protected_sex_probs  = 1. / protected_sex_counts
+
+            protected_race_counts = np.array(protected_race_counts)
+            protected_race_probs  = 1. / protected_race_counts
+
+            self.nsamples = 2
+            self.protected_race_probs = protected_race_probs / np.sum(protected_race_probs)
+            self.protected_sex_probs  = protected_sex_probs / np.sum(protected_sex_probs)
+
+            self.label_list = []
+
+
         self.samples = []
         for idx, _ in enumerate(tqdm(range(len(self.data)), desc='Loading Data')):
             img_path = img_data_dir + self.data.loc[idx, 'path_preproc']
@@ -74,12 +113,64 @@ class CheXpertDataset(Dataset):
             sample = {'image_path': img_path, 'label_disease': img_label_disease, 'label_sex': img_label_sex, 'label_race': img_label_race}
             self.samples.append(sample)
 
+            if self.invariant_sampling:
+                # invariant set selection -- update wrt task
+                img_label_disease_ = [img_label_disease[self.labels == 'No Finding'],
+                                        img_label_disease[self.labels == 'Pleural Effusion']]
+                key = ','.join(map(str,img_label_disease_))
+                if key not in self.attribute_wise_samples[int(img_label_sex)][int(img_label_race)]:
+                    self.attribute_wise_samples[int(img_label_sex)][int(img_label_race)][key] = []
+
+                self.attribute_wise_samples[int(img_label_sex)][int(img_label_race)][key].append(sample)
+
+                if key not in self.label_list:
+                    self.label_list.append(key)
+       
+
+
     def __len__(self):
         return len(self.data)
 
-    def __getitem__(self, item):
-        sample = self.get_sample(item)
 
+    def getitem_inv(self, item):
+        samples = self.get_sample(item)
+
+
+        images = []
+        labels_disease = []
+        labels_sex = []
+        labels_race = []
+
+        for sample in samples:
+            image = torch.from_numpy(sample['image']).unsqueeze(0)
+            label_disease = torch.from_numpy(sample['label_disease'])
+            label_sex = torch.from_numpy(sample['label_sex'])
+            label_race = torch.from_numpy(sample['label_race'])
+
+            if self.do_augment:
+                image = self.augment(image)
+
+            if self.pseudo_rgb:
+                image = image.repeat(3, 1, 1)
+
+            images.append(image.unsqueeze(0))
+            labels_disease.append(label_disease.unsqueeze(0))
+            labels_sex.append(label_sex.unsqueeze(0))
+            labels_race.append(label_race.unsqueeze(0))
+
+        images = torch.cat(images, 0)
+        labels_disease = torch.cat(labels_disease, 0)
+        labels_sex = torch.cat(labels_sex, 0)
+        labels_race = torch.cat(labels_race, 0)
+
+        return {'image': images,
+                'label_disease': labels_disease, 
+                'label_sex': labels_sex, 
+                'label_race': labels_race}
+
+
+    def getitem(self, item):
+        sample = self.get_sample(item)
         image = torch.from_numpy(sample['image']).unsqueeze(0)
         label_disease = torch.from_numpy(sample['label_disease'])
         label_sex = torch.from_numpy(sample['label_sex'])
@@ -91,18 +182,62 @@ class CheXpertDataset(Dataset):
         if self.pseudo_rgb:
             image = image.repeat(3, 1, 1)
 
-        return {'image': image, 'label_disease': label_disease, 'label_sex': label_sex, 'label_race': label_race}
+        return {'image': image, 
+                    'label_disease': label_disease, 
+                    'label_sex': label_sex, 
+                    'label_race': label_race}
 
+
+    def __getitem__(self, item):
+        if self.invariant_sampling:
+            return self.getitem_inv(item)
+        return self.getitem(item)
+
+        
     def get_sample(self, item):
-        sample = self.samples[item]
-        image = imread(sample['image_path']).astype(np.float32)
+        if not self.invariant_sampling:
+            sample = self.samples[item]
+            image = imread(sample['image_path']).astype(np.float32)
+            return {'image': image, 
+                        'label_disease': sample['label_disease'], 
+                        'label_sex': sample['label_sex'], 
+                        'label_race': sample['label_race']}
+        return self.get_samples(item)
 
-        return {'image': image, 'label_disease': sample['label_disease'], 'label_sex': sample['label_sex'], 'label_race': sample['label_race']}
+
+    def get_samples(self, item):
+        np.random.seed(item)
+
+        disease = np.random.choice(self.label_list)
+        sex = np.random.choice(len(self.protected_sex_probs), self.nsamples, p=self.protected_sex_probs)
+        race = np.random.choice(len(self.protected_race_probs), self.nsamples, p=self.protected_race_probs)
+        
+        info = []
+
+        for si in range(self.nsamples):
+            # to enforce invariance in diseases ------
+            sample = np.random.choice(self.attribute_wise_samples[sex[si]][race[si]][disease])
+            image = imread(sample['image_path']).astype(np.float32)
+            info.append(
+                        {'image': image, 
+                        'label_disease': sample['label_disease'], 
+                        'label_sex': sample['label_sex'], 
+                        'label_race': sample['label_race']}
+                    )  
+        return info
 
 
 class CheXpertDataModule(pl.LightningDataModule):
 
-    def __init__(self, csv_train_img, csv_val_img, csv_test_img, image_size, pseudo_rgb, batch_size, num_workers):
+    def __init__(self, csv_train_img, 
+                        csv_val_img, 
+                        csv_test_img, 
+                        image_size, 
+                        pseudo_rgb, 
+                        batch_size, 
+                        num_workers,  
+                        nsamples = 2,
+                        invariant_sampling = False):
         super().__init__()
         self.csv_train_img = csv_train_img
         self.csv_val_img = csv_val_img
@@ -110,10 +245,28 @@ class CheXpertDataModule(pl.LightningDataModule):
         self.image_size = image_size
         self.batch_size = batch_size
         self.num_workers = num_workers
+        self.nsamples = nsamples
+        self.invariant_sampling = invariant_sampling
 
-        self.train_set = CheXpertDataset(self.csv_train_img, self.image_size, augmentation=True, pseudo_rgb=pseudo_rgb)
-        self.val_set = CheXpertDataset(self.csv_val_img, self.image_size, augmentation=False, pseudo_rgb=pseudo_rgb)
-        self.test_set = CheXpertDataset(self.csv_test_img, self.image_size, augmentation=False, pseudo_rgb=pseudo_rgb)
+        self.train_set = CheXpertDataset(self.csv_train_img, 
+                                            self.image_size, 
+                                            augmentation=True, 
+                                            pseudo_rgb=pseudo_rgb,
+                                            nsamples = self.nsamples,
+                                            invariant_sampling = self.invariant_sampling)
+
+        self.val_set = CheXpertDataset(self.csv_val_img, 
+                                        self.image_size, 
+                                        augmentation=False, 
+                                        pseudo_rgb=pseudo_rgb,
+                                        nsamples = 1,
+                                        invariant_sampling = False)
+        self.test_set = CheXpertDataset(self.csv_test_img, 
+                                        self.image_size, 
+                                        augmentation=False, 
+                                        pseudo_rgb=pseudo_rgb,
+                                        nsamples = 1,
+                                        invariant_sampling = False)
 
         print('#train: ', len(self.train_set))
         print('#val:   ', len(self.val_set))
@@ -129,28 +282,63 @@ class CheXpertDataModule(pl.LightningDataModule):
         return DataLoader(self.test_set, self.batch_size, shuffle=False, num_workers=self.num_workers)
 
 
-class ResNet(pl.LightningModule):
 
-    def __init__(self, num_classes_disease, num_classes_sex, num_classes_race, class_weights_race):
+class BaseNet(ABC, pl.LightningModule):
+    def __init__(self, num_classes_disease, 
+                        num_classes_sex, 
+                        num_classes_race, 
+                        class_weights_race):
         super().__init__()
         self.num_classes_disease = num_classes_disease
         self.num_classes_sex = num_classes_sex
         self.num_classes_race = num_classes_race
         self.class_weights_race = torch.FloatTensor(class_weights_race)
-        self.backbone = models.resnet34(pretrained=True)
-        num_features = self.backbone.fc.in_features
-        self.fc_disease = nn.Linear(num_features, self.num_classes_disease)
-        self.fc_sex = nn.Linear(num_features, self.num_classes_sex)
-        self.fc_race = nn.Linear(num_features, self.num_classes_race)
-        self.fc_connect = nn.Identity(num_features)
-        self.backbone.fc = self.fc_connect
+
+        self.fc_disease = None
+        self.fc_sex = None
+        self.fc_race = None
+        self.backbone = None 
 
     def forward(self, x):
-        embedding = self.backbone.forward(x)
+        embedding = self.backbone(x)
         out_disease = self.fc_disease(embedding)
         out_sex = self.fc_sex(embedding)
         out_race = self.fc_race(embedding)
-        return out_disease, out_sex, out_race
+        return embedding, out_disease, out_sex, out_race
+
+    def unpack_batch(self, batch):
+        return batch['image'], batch['label_disease'], batch['label_sex'], batch['label_race']
+
+    def process_batch(self, batch):
+        img, lab_disease, lab_sex, lab_race = self.unpack_batch(batch)
+        embedding, out_disease, out_sex, out_race = self.forward(img)
+
+        loss_disease = F.binary_cross_entropy_with_logits(out_disease, lab_disease)
+        loss_sex     = F.cross_entropy(out_sex, lab_sex)
+        loss_race    = F.cross_entropy(out_race, lab_race, weight=self.class_weights_race.to(img.device))
+        loss_inv     = 0
+
+        return loss_disease, loss_sex, loss_race, loss_inv
+
+    def process_batch_list(self, batch):
+        img, lab_disease, lab_sex, lab_race = self.unpack_batch(batch)
+        loss_inv     = 0
+        loss_disease = 0
+        loss_sex     = 0
+        loss_race    = 0
+        prev_embedding = None
+
+        for i in range(img.shape[0]):  
+            embedding, out_disease, out_sex, out_race = self.forward(img[i])  
+            loss_disease += F.binary_cross_entropy_with_logits(out_disease, lab_disease[i])
+            loss_sex += F.cross_entropy(out_sex, lab_sex[i])
+            loss_race += F.cross_entropy(out_race, lab_race[i], weight=self.class_weights_race.to(img.device))
+            
+            if prev_embedding is not None:
+                loss_inv += F.mse_loss(embedding, prev_embedding)
+            prev_embedding = embedding
+
+        return loss_disease, loss_sex, loss_race, loss_inv
 
     def configure_optimizers(self):
         params_backbone = list(self.backbone.parameters())
@@ -160,50 +348,83 @@ class ResNet(pl.LightningModule):
         optim_disease = torch.optim.Adam(params_disease, lr=0.001)
         optim_sex = torch.optim.Adam(params_sex, lr=0.001)
         optim_race = torch.optim.Adam(params_race, lr=0.001)
-        return optim_disease, optim_sex, optim_race
 
-    def unpack_batch(self, batch):
-        return batch['image'], batch['label_disease'], batch['label_sex'], batch['label_race']
 
-    def process_batch(self, batch):
-        img, lab_disease, lab_sex, lab_race = self.unpack_batch(batch)
-        out_disease, out_sex, out_race = self.forward(img)
-        loss_disease = F.binary_cross_entropy(torch.sigmoid(out_disease), lab_disease)
-        loss_sex = F.cross_entropy(out_sex, lab_sex)
-        loss_race = F.cross_entropy(out_race, lab_race, weight=self.class_weights_race.type_as(img))
-        return loss_disease, loss_sex, loss_race
+        return [optim_disease, optim_sex, optim_race]
 
-    def training_step(self, batch, batch_idx, optimizer_idx):
-        loss_disease, loss_sex, loss_race = self.process_batch(batch)
-        self.log_dict({"train_loss_disease": loss_disease, "train_loss_sex": loss_sex, "train_loss_race": loss_race})
-        grid = torchvision.utils.make_grid(batch['image'][0:4, ...], nrow=2, normalize=True)
+
+    def training_step(self, batch, batch_idx):
+        optim_disease, optim_sex, optim_race = self.optimizers()
+        optim_disease.zero_grad()
+        optim_sex.zero_grad()
+        optim_race.zero_grad()
+
+        invariant_rep = len(batch['image'].shape) == 5
+        batch_processer = self.process_batch if not invariant_rep else self.process_batch_list
+
+        loss_disease, loss_sex, loss_race, loss_inv = batch_processer(batch)
+        self.log_dict({"train_loss_disease": loss_disease, 
+                        "train_loss_sex": loss_sex, 
+                        "train_loss_race": loss_race,
+                        "train_loss_inv": loss_inv})
+
+        samples = batch['image'] if not invariant_rep else batch['image'][0]
+
+        grid = torchvision.utils.make_grid(samples[0:4, ...], nrow=2, normalize=True)
         self.logger.experiment.add_image('images', grid, self.global_step)
 
-        if optimizer_idx == 0:
-            return loss_disease
-        if optimizer_idx == 1:
-            return loss_sex
-        if optimizer_idx == 2:
-            return loss_race
+        self.manual_backward(loss_disease + loss_inv, retain_graph=True)
+        self.manual_backward(loss_sex, retain_graph=True)
+        self.manual_backward(loss_race)
+
+        optim_disease.step()
+        optim_sex.step()
+        optim_race.step()
+
 
     def validation_step(self, batch, batch_idx):
-        loss_disease, loss_sex, loss_race = self.process_batch(batch)
-        self.log_dict({"val_loss_disease": loss_disease, "val_loss_sex": loss_sex, "val_loss_race": loss_race})
+
+        invariant_rep = len(batch['image'].shape) == 5
+        batch_processer = self.process_batch if not invariant_rep else self.process_batch_list
+
+        loss_disease, loss_sex, loss_race, loss_inv = batch_processer(batch)
+        self.log_dict({"val_loss_disease": loss_disease, 
+                        "val_loss_sex": loss_sex, 
+                        "val_loss_race": loss_race,
+                        "val_loss_inv": loss_inv})
 
     def test_step(self, batch, batch_idx):
-        loss_disease, loss_sex, loss_race = self.process_batch(batch)
-        self.log_dict({"test_loss_disease": loss_disease, "test_loss_sex": loss_sex, "test_loss_race": loss_race})
+        invariant_rep = len(batch['image'].shape) == 5
+        batch_processer = self.process_batch if not invariant_rep else self.process_batch_list
+
+        loss_disease, loss_sex, loss_race, loss_inv = batch_processer(batch)
+        self.log_dict({"test_loss_disease": loss_disease, 
+                        "test_loss_sex": loss_sex, 
+                        "test_loss_race": loss_race,
+                        "test_loss_inv": loss_inv})
 
 
-class DenseNet(pl.LightningModule):
-
+class ResNet(BaseNet):
     def __init__(self, num_classes_disease, num_classes_sex, num_classes_race, class_weights_race):
-        super().__init__()
-        self.automatic_optimization = False
+        super().__init__(num_classes_disease, num_classes_sex, num_classes_race, class_weights_race)
+        
+        self.backbone = models.resnet34(pretrained=True)
+        num_features = self.backbone.fc.in_features
+        self.fc_disease = nn.Linear(num_features, self.num_classes_disease)
+        self.fc_sex = nn.Linear(num_features, self.num_classes_sex)
+        self.fc_race = nn.Linear(num_features, self.num_classes_race)
+        
+        self.fc_connect = nn.Identity(num_features)
+        self.backbone.fc = self.fc_connect
 
-        self.num_classes_disease = num_classes_disease
-        self.num_classes_sex = num_classes_sex
-        self.num_classes_race = num_classes_race
+
+
+
+class DenseNet(BaseNet):
+    def __init__(self, num_classes_disease, num_classes_sex, num_classes_race, class_weights_race):
+        super().__init__(num_classes_disease, num_classes_sex, num_classes_race, class_weights_race)
+        self.automatic_optimization = False  # Manual optimization needed
+
         self.class_weights_race = torch.FloatTensor(class_weights_race)
         self.backbone = models.densenet121(pretrained=True)
         num_features = self.backbone.classifier.in_features
@@ -213,79 +434,8 @@ class DenseNet(pl.LightningModule):
         self.fc_connect = nn.Identity(num_features)
         self.backbone.classifier = self.fc_connect
 
-    def forward(self, x):
-        embedding = self.backbone.forward(x)
-        out_disease = self.fc_disease(embedding)
-        out_sex = self.fc_sex(embedding)
-        out_race = self.fc_race(embedding)
-        return out_disease, out_sex, out_race
+   
 
-    def configure_optimizers(self):
-        # params_backbone = list(self.backbone.parameters())
-        # params_disease = params_backbone + list(self.fc_disease.parameters())
-        # params_sex = params_backbone + list(self.fc_sex.parameters())
-        # params_race = params_backbone + list(self.fc_race.parameters())
-        # optim_disease = torch.optim.Adam(params_disease, lr=0.001)
-        # optim_sex = torch.optim.Adam(params_sex, lr=0.001)
-        # optim_race = torch.optim.Adam(params_race, lr=0.001)
-        optim_backbone = torch.optim.Adam(self.backbone.parameters(), lr=0.001)
-        optim_disease = torch.optim.Adam(self.fc_disease.parameters(), lr=0.001)
-        optim_sex = torch.optim.Adam(self.fc_sex.parameters(), lr=0.001)
-        optim_race = torch.optim.Adam(self.fc_race.parameters(), lr=0.001)
-        return [optim_backbone, optim_disease, optim_sex, optim_race]
-
-    def unpack_batch(self, batch):
-        return batch['image'], batch['label_disease'], batch['label_sex'], batch['label_race']
-
-    def process_batch(self, batch):
-        img, lab_disease, lab_sex, lab_race = self.unpack_batch(batch)
-        out_disease, out_sex, out_race = self.forward(img)
-        loss_disease = F.binary_cross_entropy(torch.sigmoid(out_disease), lab_disease)
-        loss_sex = F.cross_entropy(out_sex, lab_sex)
-        loss_race = F.cross_entropy(out_race, lab_race, weight=self.class_weights_race.type_as(img))
-        return loss_disease, loss_sex, loss_race
-
-    # for multiple optimizers
-    def training_step(self, batch, batch_idx):
-        optim_backbone, optim_disease, optim_sex, optim_race = self.optimizers()
-        optim_backbone.zero_grad()
-        optim_disease.zero_grad()
-        optim_sex.zero_grad()
-        optim_race.zero_grad()
-
-        loss_disease, loss_sex, loss_race = self.process_batch(batch)
-        self.log_dict({
-            "train_loss_disease": loss_disease,
-            "train_loss_sex": loss_sex,
-            "train_loss_race": loss_race,
-        })
-        grid = torchvision.utils.make_grid(batch['image'][0:4, ...], nrow=2, normalize=True)
-        self.logger.experiment.add_image('images', grid, self.global_step)
-
-        self.manual_backward(loss_disease, retain_graph=True)
-        self.manual_backward(loss_sex, retain_graph=True)
-        self.manual_backward(loss_race)
-
-        optim_backbone.step()
-        optim_disease.step()
-        optim_sex.step()
-        optim_race.step()
-
-    def validation_step(self, batch, batch_idx):
-        loss_disease, loss_sex, loss_race = self.process_batch(batch)
-        self.log_dict({
-            "val_loss_disease": loss_disease,
-            "val_loss_sex": loss_sex,
-            "val_loss_race": loss_race,
-        })
-
-    def test_step(self, batch, batch_idx):
-        loss_disease, loss_sex, loss_race = self.process_batch(batch)
-        self.log_dict({
-            "test_loss_disease": loss_disease,
-            "test_loss_sex": loss_sex,
-            "test_loss_race": loss_race,
-        })
 
 
 def test(model, data_loader, device):
@@ -395,6 +545,8 @@ def main(hparams):
         pseudo_rgb=True,
         batch_size=batch_size,
         num_workers=num_workers,
+        nsamples = hparams.nsamples,
+        invariant_sampling = hparams.invariant_sampling
     )
 
     # model
@@ -403,6 +555,9 @@ def main(hparams):
 
     # Create output directory
     out_name = 'densenet-all'
+    if hparams.invariant_sampling:
+        out_name = f'invariant-densenet-all-nsamples-{hparams.nsamples}'
+
     out_dir = 'chexpert/multitask/' + out_name
     if not os.path.exists(out_dir):
         os.makedirs(out_dir)
@@ -412,7 +567,7 @@ def main(hparams):
         os.makedirs(temp_dir)
 
     for idx in range(0,5):
-        sample = data.train_set.get_sample(idx)
+        sample = data.val_set.get_sample(idx)
         imsave(os.path.join(temp_dir, 'sample_' + str(idx) + '.jpg'), sample['image'].astype(np.uint8))
 
     checkpoint_callback = ModelCheckpoint(monitor="val_loss_disease", mode='min')
@@ -508,8 +663,11 @@ def main(hparams):
 
 def cli():
     parser = ArgumentParser()
-    parser.add_argument('--gpus', default=1)
-    parser.add_argument('--dev', default=0)
+    parser.add_argument('--gpus', type = int, default=1)
+    parser.add_argument('--dev', type = int, default=0)
+
+    parser.add_argument('--nsamples', type=int, default=1)
+    parser.add_argument('--invariant_sampling', action='store_true')
     args = parser.parse_args()
 
     main(args)
