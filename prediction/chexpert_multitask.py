@@ -10,7 +10,6 @@ import torchvision.transforms as T
 from torchvision import models
 import pytorch_lightning as pl
 from dotenv import load_dotenv
-from stocaching import SharedCache
 
 from pytorch_lightning.loggers import TensorBoardLogger
 from pytorch_lightning.callbacks import ModelCheckpoint
@@ -40,18 +39,18 @@ class CheXpertDataset(Dataset):
         self,
         csv_file_img,
         image_size, 
-        augmentation = False, 
-        pseudo_rgb = True,
-        cache_size=0,
+        augmentation=False, 
+        pseudo_rgb=True,
+        use_cache=False,
         nsamples=2,
-        invariant_sampling = False,
+        invariant_sampling=False,
     ):
         self.data = pd.read_csv(csv_file_img)
         self.image_size = image_size
         self.do_augment = augmentation
         self.pseudo_rgb = pseudo_rgb
         self.invariant_sampling = invariant_sampling
-        self.use_cache = cache_size > 0
+        self.use_cache = use_cache
 
         self.labels = [
             'No Finding',
@@ -211,7 +210,6 @@ class CheXpertDataset(Dataset):
             if self.use_cache:
                 if sample['image_path'] in self.cache:
                     image = self.cache[sample['image_path']]
-
             
             if image is None:
                 image = self._read_image(sample['image_path'])
@@ -272,7 +270,7 @@ class CheXpertDataModule(pl.LightningDataModule):
         pseudo_rgb, 
         batch_size, 
         num_workers,  
-        cache_size=0,
+        use_cache=False,
         nsamples=2,
         invariant_sampling=False,
     ):
@@ -284,7 +282,7 @@ class CheXpertDataModule(pl.LightningDataModule):
         self.batch_size = batch_size
         self.num_workers = num_workers
         self.nsamples = nsamples
-        self.cache_size = cache_size
+        self.use_cache = use_cache
         self.invariant_sampling = invariant_sampling
 
         self.train_set = CheXpertDataset(
@@ -292,7 +290,7 @@ class CheXpertDataModule(pl.LightningDataModule):
             self.image_size, 
             augmentation=True, 
             pseudo_rgb=pseudo_rgb,
-            cache_size=self.cache_size,
+            use_cache=self.use_cache,
             nsamples=self.nsamples,
             invariant_sampling=self.invariant_sampling,
         )
@@ -594,7 +592,7 @@ def main(hparams):
         num_workers=num_workers,
         nsamples=hparams.nsamples,
         invariant_sampling=hparams.invariant_sampling,
-        cache_size=32,
+        use_cache=True,
     )
 
     # model
@@ -607,9 +605,10 @@ def main(hparams):
     )
 
     # Create output directory
-    out_name = 'densenet-all'
     if hparams.invariant_sampling:
         out_name = f'invariant-densenet-all-nsamples-{hparams.nsamples}'
+    else:
+        out_name = 'densenet-all'
 
     out_dir = 'chexpert/multitask/' + out_name
     if not os.path.exists(out_dir):
