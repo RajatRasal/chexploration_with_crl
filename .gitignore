@@ -9,3 +9,5 @@ notebooks/*.pdf
 notebooks/*.csv
 
 chexpert/
+
+slurm_logs/
