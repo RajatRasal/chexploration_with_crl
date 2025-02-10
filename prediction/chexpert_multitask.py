@@ -28,7 +28,7 @@ num_classes_sex = 2
 num_classes_race = 3
 class_weights_race = (1.0, 1.0, 1.0)  # can be changed to balance accuracy
 batch_size = 32
-epochs = 20
+epochs = 5
 num_workers = 4
 img_data_dir = os.getenv("CHEXPERT_FOLDER")
 
@@ -75,7 +75,7 @@ class CheXpertDataset(Dataset):
         ])
 
         if self.invariant_sampling:
-            protected_sex_attributes  = np.unique(self.data['sex_label'].values)
+            protected_sex_attributes = np.unique(self.data['sex_label'].values)
             protected_race_attributes = np.unique(self.data['race_label'].values)
             self.attribute_wise_samples = {}
 
@@ -92,14 +92,14 @@ class CheXpertDataset(Dataset):
 
 
             protected_sex_counts = np.array(protected_sex_counts)
-            protected_sex_probs  = 1. / protected_sex_counts
+            protected_sex_probs = 1. / protected_sex_counts
 
             protected_race_counts = np.array(protected_race_counts)
-            protected_race_probs  = 1. / protected_race_counts
+            protected_race_probs = 1. / protected_race_counts
 
             self.nsamples = nsamples
             self.protected_race_probs = protected_race_probs / np.sum(protected_race_probs)
-            self.protected_sex_probs  = protected_sex_probs / np.sum(protected_sex_probs)
+            self.protected_sex_probs = protected_sex_probs / np.sum(protected_sex_probs)
 
             self.label_list = []
 
@@ -333,12 +333,14 @@ class BaseNet(ABC, pl.LightningModule):
         num_classes_sex, 
         num_classes_race, 
         class_weights_race,
+        inv_loss_coefficient,
     ):
         super().__init__()
         self.num_classes_disease = num_classes_disease
         self.num_classes_sex = num_classes_sex
         self.num_classes_race = num_classes_race
         self.class_weights_race = torch.FloatTensor(class_weights_race)
+        self.inv_loss_coefficient = inv_loss_coefficient
 
         self.fc_disease = None
         self.fc_sex = None
@@ -399,11 +401,6 @@ class BaseNet(ABC, pl.LightningModule):
         return [optim_disease, optim_sex, optim_race]
 
     def training_step(self, batch, batch_idx):
-        optim_disease, optim_sex, optim_race = self.optimizers()
-        optim_disease.zero_grad()
-        optim_sex.zero_grad()
-        optim_race.zero_grad()
-
         invariant_rep = len(batch['image'].shape) == 5
         batch_processer = self.process_batch if not invariant_rep else self.process_batch_list
 
@@ -416,24 +413,28 @@ class BaseNet(ABC, pl.LightningModule):
         })
 
         samples = batch['image'] if not invariant_rep else batch['image'][0]
-
         grid = torchvision.utils.make_grid(samples[0:4, ...], nrow=2, normalize=True)
         self.logger.experiment.add_image('images', grid, self.global_step)
 
-        self.manual_backward(loss_disease + loss_inv, retain_graph=True)
-        self.manual_backward(loss_sex, retain_graph=True)
-        self.manual_backward(loss_race)
+        # Optimise the whole network w.r.t each head separately
+        optim_disease, optim_sex, optim_race = self.optimizers()
 
+        optim_disease.zero_grad()
+        self.manual_backward(loss_disease + self.inv_loss_coefficient * loss_inv)
         optim_disease.step()
+
+        _, loss_sex, _, _ = batch_processer(batch)
+        optim_sex.zero_grad()
+        self.manual_backward(loss_sex)
         optim_sex.step()
+
+        _, _, loss_race, _ = batch_processer(batch)
+        optim_race.zero_grad()
+        self.manual_backward(loss_race)
         optim_race.step()
 
     def validation_step(self, batch, batch_idx):
-
-        invariant_rep = len(batch['image'].shape) == 5
-        batch_processer = self.process_batch if not invariant_rep else self.process_batch_list
-
-        loss_disease, loss_sex, loss_race, loss_inv = batch_processer(batch)
+        loss_disease, loss_sex, loss_race, loss_inv = self.process_batch(batch)
         self.log_dict({
             "val_loss_disease": loss_disease, 
             "val_loss_sex": loss_sex, 
@@ -442,10 +443,7 @@ class BaseNet(ABC, pl.LightningModule):
         })
 
     def test_step(self, batch, batch_idx):
-        invariant_rep = len(batch['image'].shape) == 5
-        batch_processer = self.process_batch if not invariant_rep else self.process_batch_list
-
-        loss_disease, loss_sex, loss_race, loss_inv = batch_processer(batch)
+        loss_disease, loss_sex, loss_race, loss_inv = self.process_batch(batch)
         self.log_dict({
             "test_loss_disease": loss_disease, 
             "test_loss_sex": loss_sex, 
@@ -456,8 +454,21 @@ class BaseNet(ABC, pl.LightningModule):
 
 class ResNet(BaseNet):
 
-    def __init__(self, num_classes_disease, num_classes_sex, num_classes_race, class_weights_race):
-        super().__init__(num_classes_disease, num_classes_sex, num_classes_race, class_weights_race)
+    def __init__(
+        self,
+        num_classes_disease,
+        num_classes_sex,
+        num_classes_race,
+        class_weights_race,
+        inv_loss_coefficient,
+    ):
+        super().__init__(
+            num_classes_disease,
+            num_classes_sex,
+            num_classes_race,
+            class_weights_race,
+            inv_loss_coefficient,
+        )
         self.automatic_optimization = False  # Manual optimization needed
         self.backbone = models.resnet34(pretrained=True)
         num_features = self.backbone.fc.in_features
@@ -470,8 +481,21 @@ class ResNet(BaseNet):
 
 class DenseNet(BaseNet):
 
-    def __init__(self, num_classes_disease, num_classes_sex, num_classes_race, class_weights_race):
-        super().__init__(num_classes_disease, num_classes_sex, num_classes_race, class_weights_race)
+    def __init__(
+        self,
+        num_classes_disease,
+        num_classes_sex,
+        num_classes_race,
+        class_weights_race,
+        inv_loss_coefficient,
+    ):
+        super().__init__(
+            num_classes_disease,
+            num_classes_sex,
+            num_classes_race,
+            class_weights_race,
+            inv_loss_coefficient,
+        )
         self.automatic_optimization = False  # Manual optimization needed
         self.class_weights_race = torch.FloatTensor(class_weights_race)
         self.backbone = models.densenet121(pretrained=True)
@@ -498,7 +522,7 @@ def test(model, data_loader, device):
     with torch.no_grad():
         for index, batch in enumerate(tqdm(data_loader, desc='Test-loop')):
             img, lab_disease, lab_sex, lab_race = batch['image'].to(device), batch['label_disease'].to(device), batch['label_sex'].to(device), batch['label_race'].to(device)
-            out_disease, out_sex, out_race = model(img)
+            _, out_disease, out_sex, out_race = model(img)
 
             pred_disease = torch.sigmoid(out_disease)
             pred_sex = torch.softmax(out_sex, dim=1)
@@ -592,7 +616,7 @@ def main(hparams):
         num_workers=num_workers,
         nsamples=hparams.nsamples,
         invariant_sampling=hparams.invariant_sampling,
-        use_cache=True,
+        use_cache=False,
     )
 
     # model
@@ -602,11 +626,12 @@ def main(hparams):
         num_classes_sex=num_classes_sex,
         num_classes_race=num_classes_race,
         class_weights_race=class_weights_race,
+        inv_loss_coefficient=hparams.inv_loss_coefficient,
     )
 
     # Create output directory
     if hparams.invariant_sampling:
-        out_name = f'invariant-densenet-all-nsamples-{hparams.nsamples}'
+        out_name = f'invariant-densenet-all-nsamples-{hparams.nsamples}-{hparams.inv_loss_coefficient}'
     else:
         out_name = 'densenet-all'
 
@@ -622,11 +647,16 @@ def main(hparams):
         sample = data.val_set.get_sample(idx)
         imsave(os.path.join(temp_dir, 'sample_' + str(idx) + '.jpg'), sample['image'].numpy().astype(np.uint8))
 
-    checkpoint_callback = ModelCheckpoint(monitor="val_loss_disease", mode='min')
+    checkpoint_callback = ModelCheckpoint(
+        monitor="val_loss_disease",
+        mode="min",
+        every_n_train_steps=100,
+        save_last=True,
+    )
 
     # train
     trainer = pl.Trainer(
-        callbacks=[checkpoint_callback],
+        callbacks=[checkpoint_callback],  #, checkpoint_callback_val_disease],
         log_every_n_steps=5,
         max_epochs=epochs,
         devices=hparams.gpus,
@@ -635,21 +665,28 @@ def main(hparams):
     trainer.logger._default_hp_metric = False
     trainer.fit(model, data)
 
-    model = model_type.load_from_checkpoint(trainer.checkpoint_callback.best_model_path, num_classes_disease=num_classes_disease, num_classes_sex=num_classes_sex, num_classes_race=num_classes_race, class_weights_race=class_weights_race)
+    model = model_type.load_from_checkpoint(
+        trainer.checkpoint_callback.best_model_path,
+        num_classes_disease=num_classes_disease,
+        num_classes_sex=num_classes_sex,
+        num_classes_race=num_classes_race,
+        class_weights_race=class_weights_race,
+        inv_loss_coefficient=hparams.inv_loss_coefficient,
+    )
 
     use_cuda = torch.cuda.is_available()
     device = torch.device("cuda:" + str(hparams.dev) if use_cuda else "cpu")
 
     model.to(device)
 
-    cols_names_classes_disease = ['class_' + str(i) for i in range(0,num_classes_disease)]
+    cols_names_classes_disease = ['class_' + str(i) for i in range(0, num_classes_disease)]
     cols_names_logits_disease = ['logit_' + str(i) for i in range(0, num_classes_disease)]
     cols_names_targets_disease = ['target_' + str(i) for i in range(0, num_classes_disease)]
 
-    cols_names_classes_sex = ['class_' + str(i) for i in range(0,num_classes_sex)]
+    cols_names_classes_sex = ['class_' + str(i) for i in range(0, num_classes_sex)]
     cols_names_logits_sex = ['logit_' + str(i) for i in range(0, num_classes_sex)]
 
-    cols_names_classes_race = ['class_' + str(i) for i in range(0,num_classes_race)]
+    cols_names_classes_race = ['class_' + str(i) for i in range(0, num_classes_race)]
     cols_names_logits_race = ['logit_' + str(i) for i in range(0, num_classes_race)]
 
     print('VALIDATION')
@@ -718,6 +755,7 @@ def cli():
     parser.add_argument('--dev', type = int, default=0)
 
     parser.add_argument('--nsamples', type=int, default=1)
+    parser.add_argument('--inv_loss_coefficient', type=int, default=1)
     parser.add_argument('--invariant_sampling', action='store_true')
     args = parser.parse_args()
 

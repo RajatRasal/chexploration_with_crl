@@ -8,4 +8,4 @@
 cd /vol/biomedic3/rrr2417/chexploration_with_crl
 source ../.bashrc
 
-poetry run chexpert_train --nsamples 5 --invariant_sampling
+poetry run chexpert_train --nsamples 2 --invariant_sampling --inv_loss_coefficient 50
