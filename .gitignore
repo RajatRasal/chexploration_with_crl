@@ -10,4 +10,8 @@ notebooks/*.csv
 
 chexpert/
 
+logs/
+logs_test/
 slurm_logs/
+
+.venv

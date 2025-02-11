@@ -18,19 +18,33 @@ from skimage.io import imsave
 from tqdm import tqdm
 from argparse import ArgumentParser
 
+import json
 from abc import ABC
 
 load_dotenv()
 
 image_size = (224, 224)
-num_classes_disease = 14
-num_classes_sex = 2
-num_classes_race = 3
-class_weights_race = (1.0, 1.0, 1.0)  # can be changed to balance accuracy
+num_classes_disease = 2
 batch_size = 32
-epochs = 5
+epochs = 10
 num_workers = 4
 img_data_dir = os.getenv("CHEXPERT_FOLDER")
+
+
+class MIMIC(Dataset):
+    
+    def __init__(
+        self,
+        csv_file_img,
+        image_size, 
+        augmentation=False, 
+        pseudo_rgb=True,
+        use_cache=False,
+        nsamples=2,
+        invariant_sampling=False,
+        protected_race_set=[0, 1],
+    ):
+        pass
 
 
 class CheXpertDataset(Dataset):
@@ -44,6 +58,7 @@ class CheXpertDataset(Dataset):
         use_cache=False,
         nsamples=2,
         invariant_sampling=False,
+        protected_race_set=[0, 1],
     ):
         self.data = pd.read_csv(csv_file_img)
         self.image_size = image_size
@@ -51,23 +66,9 @@ class CheXpertDataset(Dataset):
         self.pseudo_rgb = pseudo_rgb
         self.invariant_sampling = invariant_sampling
         self.use_cache = use_cache
+        self.protected_race_set = protected_race_set
 
-        self.labels = [
-            'No Finding',
-            'Enlarged Cardiomediastinum',
-            'Cardiomegaly',
-            'Lung Opacity',
-            'Lung Lesion',
-            'Edema',
-            'Consolidation',
-            'Pneumonia',
-            'Atelectasis',
-            'Pneumothorax',
-            'Pleural Effusion',
-            'Pleural Other',
-            'Fracture',
-            'Support Devices',
-        ]
+        self.labels = ['No Finding', 'Pleural Effusion']
 
         self.augment = T.Compose([
             T.RandomHorizontalFlip(p=0.5),
@@ -75,31 +76,20 @@ class CheXpertDataset(Dataset):
         ])
 
         if self.invariant_sampling:
-            protected_sex_attributes = np.unique(self.data['sex_label'].values)
-            protected_race_attributes = np.unique(self.data['race_label'].values)
+            # We have 3 races: 0, 1, 2
+            # protected_race_attributes = np.unique(self.data['race_label'].values)
+            # protected_race_counts = np.zeros_like(protected_race_attributes)
             self.attribute_wise_samples = {}
+            protected_race_counts = np.zeros_like(self.protected_race_set)
 
-            protected_sex_counts = np.zeros_like(protected_sex_attributes)
-            protected_race_counts = np.zeros_like(protected_race_attributes)
+            for i, race in enumerate(self.protected_race_set):
+                self.attribute_wise_samples[race] = {}
+                protected_race_counts[i] = np.sum(1. * (self.data['race_label'].values == race))
 
-            for i, sex in enumerate(protected_sex_attributes):
-                self.attribute_wise_samples[sex] = {}
-                protected_sex_counts[i] = np.sum(1. * (self.data['sex_label'].values == sex))
-
-                for i, race in enumerate(protected_race_attributes):
-                    self.attribute_wise_samples[sex][race] = {}
-                    protected_race_counts[i] = np.sum(1. * (self.data['race_label'].values == race))
-
-
-            protected_sex_counts = np.array(protected_sex_counts)
-            protected_sex_probs = 1. / protected_sex_counts
-
-            protected_race_counts = np.array(protected_race_counts)
             protected_race_probs = 1. / protected_race_counts
 
             self.nsamples = nsamples
             self.protected_race_probs = protected_race_probs / np.sum(protected_race_probs)
-            self.protected_sex_probs = protected_sex_probs / np.sum(protected_sex_probs)
 
             self.label_list = []
 
@@ -109,15 +99,14 @@ class CheXpertDataset(Dataset):
             img_label_disease = np.zeros(len(self.labels), dtype='float32')
             for i in range(0, len(self.labels)):
                 img_label_disease[i] = np.array(self.data.loc[idx, self.labels[i].strip()] == 1, dtype='float32')
-
-            img_label_sex = np.array(self.data.loc[idx, 'sex_label'], dtype='int64')
             img_label_race = np.array(self.data.loc[idx, 'race_label'], dtype='int64')
 
+            if int(img_label_race) not in self.protected_race_set:
+                continue
             sample = {
                 'image_path': img_path,
                 'label_disease': img_label_disease,
-                'label_sex': img_label_sex,
-                'label_race': img_label_race,
+                'protected_attribute': img_label_race,
             }
             self.samples.append(sample)
 
@@ -127,11 +116,11 @@ class CheXpertDataset(Dataset):
                     img_label_disease[self.labels == 'No Finding'],
                     img_label_disease[self.labels == 'Pleural Effusion'],
                 ]
-                key = ','.join(map(str,img_label_disease_))
-                if key not in self.attribute_wise_samples[int(img_label_sex)][int(img_label_race)]:
-                    self.attribute_wise_samples[int(img_label_sex)][int(img_label_race)][key] = []
+                key = ','.join(map(str, img_label_disease_))
+                if key not in self.attribute_wise_samples[int(img_label_race)]:
+                    self.attribute_wise_samples[int(img_label_race)][key] = []
 
-                self.attribute_wise_samples[int(img_label_sex)][int(img_label_race)][key].append(sample)
+                self.attribute_wise_samples[int(img_label_race)][key].append(sample)
 
                 if key not in self.label_list:
                     self.label_list.append(key)
@@ -140,21 +129,19 @@ class CheXpertDataset(Dataset):
             self.cache = {}
 
     def __len__(self):
-        return len(self.data)
+        return len(self.samples)
 
     def getitem_inv(self, item):
         samples = self.get_sample(item)
 
         images = []
         labels_disease = []
-        labels_sex = []
         labels_race = []
 
         for sample in samples:
-            image = sample['image'].unsqueeze(0)  # torch.from_numpy(sample['image']).unsqueeze(0)
+            image = sample['image'].unsqueeze(0)
             label_disease = torch.from_numpy(sample['label_disease'])
-            label_sex = torch.from_numpy(sample['label_sex'])
-            label_race = torch.from_numpy(sample['label_race'])
+            label_race = torch.from_numpy(sample['protected_attribute'])
 
             if self.do_augment:
                 image = self.augment(image)
@@ -164,27 +151,23 @@ class CheXpertDataset(Dataset):
 
             images.append(image.unsqueeze(0))
             labels_disease.append(label_disease.unsqueeze(0))
-            labels_sex.append(label_sex.unsqueeze(0))
             labels_race.append(label_race.unsqueeze(0))
 
         images = torch.cat(images, 0)
         labels_disease = torch.cat(labels_disease, 0)
-        labels_sex = torch.cat(labels_sex, 0)
         labels_race = torch.cat(labels_race, 0)
 
         return {
             'image': images,
             'label_disease': labels_disease, 
-            'label_sex': labels_sex, 
-            'label_race': labels_race,
+            'protected_attribute': labels_race,
         }
 
     def getitem(self, item):
         sample = self.get_sample(item)
-        image = sample['image'].unsqueeze(0)  # torch.from_numpy(sample['image']).unsqueeze(0)
+        image = sample['image'].unsqueeze(0)
         label_disease = torch.from_numpy(sample['label_disease'])
-        label_sex = torch.from_numpy(sample['label_sex'])
-        label_race = torch.from_numpy(sample['label_race'])
+        label_race = torch.from_numpy(sample['protected_attribute'])
 
         if self.do_augment:
             image = self.augment(image)
@@ -195,15 +178,16 @@ class CheXpertDataset(Dataset):
         return {
             'image': image, 
             'label_disease': label_disease, 
-            'label_sex': label_sex, 
-            'label_race': label_race,
+            'protected_attribute': label_race,
         }
 
     def __getitem__(self, item):
         return self.getitem_inv(item) if self.invariant_sampling else self.getitem(item)
         
     def get_sample(self, item):
-        if not self.invariant_sampling:
+        if self.invariant_sampling:
+            return self.get_samples(item)
+        else:
             sample = self.samples[item]
             image = None
 
@@ -219,23 +203,24 @@ class CheXpertDataset(Dataset):
             return {
                 'image': image, 
                 'label_disease': sample['label_disease'], 
-                'label_sex': sample['label_sex'], 
-                'label_race': sample['label_race'],
+                'protected_attribute': sample['protected_attribute'],
             }
-        return self.get_samples(item)
 
     def get_samples(self, item):
         np.random.seed(item)
 
         disease = np.random.choice(self.label_list)
-        sex = np.random.choice(len(self.protected_sex_probs), self.nsamples, p=self.protected_sex_probs)
-        race = np.random.choice(len(self.protected_race_probs), self.nsamples, p=self.protected_race_probs)
+        race = np.random.choice(
+            len(self.protected_race_probs),
+            self.nsamples,
+            p=self.protected_race_probs,
+        )
         
         info = []
 
         for si in range(self.nsamples):
             # enforce invariance in diseases
-            sample = np.random.choice(self.attribute_wise_samples[sex[si]][race[si]][disease])
+            sample = np.random.choice(self.attribute_wise_samples[race[si]][disease])
 
             image = None
             if self.use_cache:
@@ -250,8 +235,7 @@ class CheXpertDataset(Dataset):
             info.append({
                 'image': image, 
                 'label_disease': sample['label_disease'], 
-                'label_sex': sample['label_sex'], 
-                'label_race': sample['label_race'],
+                'protected_attribute': sample['protected_attribute'],
             })  
         return info
 
@@ -273,6 +257,8 @@ class CheXpertDataModule(pl.LightningDataModule):
         use_cache=False,
         nsamples=2,
         invariant_sampling=False,
+        protected_race_set_train=[0, 1, 2, 3],
+        protected_race_set_test=[0, 1, 2, 3],
     ):
         super().__init__()
         self.csv_train_img = csv_train_img
@@ -284,6 +270,8 @@ class CheXpertDataModule(pl.LightningDataModule):
         self.nsamples = nsamples
         self.use_cache = use_cache
         self.invariant_sampling = invariant_sampling
+        self.protected_race_set_train = protected_race_set_train
+        self.protected_race_set_test = protected_race_set_test
 
         self.train_set = CheXpertDataset(
             self.csv_train_img, 
@@ -293,6 +281,7 @@ class CheXpertDataModule(pl.LightningDataModule):
             use_cache=self.use_cache,
             nsamples=self.nsamples,
             invariant_sampling=self.invariant_sampling,
+            protected_race_set=self.protected_race_set_train,
         )
         self.val_set = CheXpertDataset(
             self.csv_val_img, 
@@ -301,14 +290,89 @@ class CheXpertDataModule(pl.LightningDataModule):
             pseudo_rgb=pseudo_rgb,
             nsamples=1,
             invariant_sampling=False,
+            protected_race_set=self.protected_race_set_train,
         )
         self.test_set = CheXpertDataset(
-            self.csv_test_img, 
+            self.csv_test_img,
+            self.image_size,
+            augmentation=False,
+            pseudo_rgb=pseudo_rgb,
+            nsamples=1,
+            invariant_sampling=False,
+            protected_race_set=self.protected_race_set_test,
+        )
+
+        print('#train: ', len(self.train_set))
+        print('#val:   ', len(self.val_set))
+        print('#test:  ', len(self.test_set))
+
+    def train_dataloader(self):
+        return DataLoader(self.train_set, self.batch_size, shuffle=True, num_workers=self.num_workers)
+
+    def val_dataloader(self):
+        return DataLoader(self.val_set, self.batch_size, shuffle=False, num_workers=self.num_workers)
+
+    def test_dataloader(self):
+        return DataLoader(self.test_set, self.batch_size, shuffle=False, num_workers=self.num_workers)
+
+
+class MIMICDataModule(pl.LightningDataModule):
+
+    def __init__(
+        self,
+        csv_train_img, 
+        csv_val_img, 
+        csv_test_img, 
+        image_size, 
+        pseudo_rgb, 
+        batch_size, 
+        num_workers,  
+        use_cache=False,
+        nsamples=2,
+        invariant_sampling=False,
+        protected_race_set_train=[0, 1, 2, 3],
+        protected_race_set_test=[0, 1, 2, 3],
+    ):
+        super().__init__()
+        self.csv_train_img = csv_train_img
+        self.csv_val_img = csv_val_img
+        self.csv_test_img = csv_test_img
+        self.image_size = image_size
+        self.batch_size = batch_size
+        self.num_workers = num_workers
+        self.nsamples = nsamples
+        self.use_cache = use_cache
+        self.invariant_sampling = invariant_sampling
+        self.protected_race_set_train = protected_race_set_train
+        self.protected_race_set_test = protected_race_set_test
+
+        self.train_set = CheXpertDataset(
+            self.csv_train_img, 
+            self.image_size, 
+            augmentation=True, 
+            pseudo_rgb=pseudo_rgb,
+            use_cache=self.use_cache,
+            nsamples=self.nsamples,
+            invariant_sampling=self.invariant_sampling,
+            protected_race_set=self.protected_race_set_train,
+        )
+        self.val_set = CheXpertDataset(
+            self.csv_val_img, 
             self.image_size, 
             augmentation=False, 
             pseudo_rgb=pseudo_rgb,
             nsamples=1,
             invariant_sampling=False,
+            protected_race_set=self.protected_race_set_train,
+        )
+        self.test_set = CheXpertDataset(
+            self.csv_test_img,
+            self.image_size,
+            augmentation=False,
+            pseudo_rgb=pseudo_rgb,
+            nsamples=1,
+            invariant_sampling=False,
+            protected_race_set=self.protected_race_set_test,
         )
 
         print('#train: ', len(self.train_set))
@@ -330,85 +394,66 @@ class BaseNet(ABC, pl.LightningModule):
     def __init__(
         self,
         num_classes_disease, 
-        num_classes_sex, 
-        num_classes_race, 
-        class_weights_race,
         inv_loss_coefficient,
+        lr_backbone=0.001,
+        lr_disease=0.001,
     ):
         super().__init__()
         self.num_classes_disease = num_classes_disease
-        self.num_classes_sex = num_classes_sex
-        self.num_classes_race = num_classes_race
-        self.class_weights_race = torch.FloatTensor(class_weights_race)
         self.inv_loss_coefficient = inv_loss_coefficient
+        self.lr_backbone = lr_backbone
+        self.lr_disease = lr_disease
 
         self.fc_disease = None
-        self.fc_sex = None
-        self.fc_race = None
         self.backbone = None 
 
     def forward(self, x):
         embedding = self.backbone(x)
         out_disease = self.fc_disease(embedding)
-        out_sex = self.fc_sex(embedding)
-        out_race = self.fc_race(embedding)
-        return embedding, out_disease, out_sex, out_race
+        return embedding, out_disease
 
     def unpack_batch(self, batch):
-        return batch['image'], batch['label_disease'], batch['label_sex'], batch['label_race']
+        return batch['image'], batch['label_disease'], batch['protected_attribute']
 
     def process_batch(self, batch):
-        img, lab_disease, lab_sex, lab_race = self.unpack_batch(batch)
-        embedding, out_disease, out_sex, out_race = self.forward(img)
+        # for non-invariant training
+        img, lab_disease, _ = self.unpack_batch(batch)
+        embedding, out_disease = self.forward(img)
 
         loss_disease = F.binary_cross_entropy_with_logits(out_disease, lab_disease)
-        loss_sex = F.cross_entropy(out_sex, lab_sex)
-        loss_race = F.cross_entropy(out_race, lab_race, weight=self.class_weights_race.to(img.device))
         loss_inv = 0
 
-        return loss_disease, loss_sex, loss_race, loss_inv
+        return loss_disease, loss_inv
 
     def process_batch_list(self, batch):
-        img, lab_disease, lab_sex, lab_race = self.unpack_batch(batch)
-        loss_inv = 0
-        loss_disease = 0
-        loss_sex = 0
-        loss_race = 0
-        prev_embedding = None
+        img, lab_disease, _ = self.unpack_batch(batch)
 
+        loss_disease = 0
+        loss_inv = 0
+        prev_embedding = None
         for i in range(img.shape[0]):  
-            embedding, out_disease, out_sex, out_race = self.forward(img[i])  
+            embedding, out_disease = self.forward(img[i])  
             loss_disease += F.binary_cross_entropy_with_logits(out_disease, lab_disease[i])
-            loss_sex += F.cross_entropy(out_sex, lab_sex[i])
-            loss_race += F.cross_entropy(
-                out_race, lab_race[i], weight=self.class_weights_race.to(img.device),
-            )
-            
             if prev_embedding is not None:
                 loss_inv += F.mse_loss(embedding, prev_embedding)
             prev_embedding = embedding
 
-        return loss_disease, loss_sex, loss_race, loss_inv
+        return loss_disease, self.inv_loss_coefficient * loss_inv
 
     def configure_optimizers(self):
         params_backbone = list(self.backbone.parameters())
         params_disease = params_backbone + list(self.fc_disease.parameters())
-        params_sex = params_backbone + list(self.fc_sex.parameters())
-        params_race = params_backbone + list(self.fc_race.parameters())
-        optim_disease = torch.optim.Adam(params_disease, lr=0.001)
-        optim_sex = torch.optim.Adam(params_sex, lr=0.001)
-        optim_race = torch.optim.Adam(params_race, lr=0.001)
-        return [optim_disease, optim_sex, optim_race]
+        optim_backbone = torch.optim.Adam(params_backbone, lr=self.lr_backbone)
+        optim_disease = torch.optim.Adam(params_disease, lr=self.lr_disease)
+        return [optim_disease, optim_backbone]
 
     def training_step(self, batch, batch_idx):
         invariant_rep = len(batch['image'].shape) == 5
-        batch_processer = self.process_batch if not invariant_rep else self.process_batch_list
+        batch_processer = self.process_batch_list if invariant_rep else self.process_batch
 
-        loss_disease, loss_sex, loss_race, loss_inv = batch_processer(batch)
+        loss_disease, loss_inv = batch_processer(batch)
         self.log_dict({
             "train_loss_disease": loss_disease, 
-            "train_loss_sex": loss_sex, 
-            "train_loss_race": loss_race,
             "train_loss_inv": loss_inv,
         })
 
@@ -417,37 +462,29 @@ class BaseNet(ABC, pl.LightningModule):
         self.logger.experiment.add_image('images', grid, self.global_step)
 
         # Optimise the whole network w.r.t each head separately
-        optim_disease, optim_sex, optim_race = self.optimizers()
+        optim_disease, optim_backbone = self.optimizers()
 
         optim_disease.zero_grad()
-        self.manual_backward(loss_disease + self.inv_loss_coefficient * loss_inv)
+        if invariant_rep:
+            optim_backbone.zero_grad()
+        self.manual_backward(loss_disease, retain_graph=True)
+        if invariant_rep:
+            self.manual_backward(loss_inv)
         optim_disease.step()
-
-        _, loss_sex, _, _ = batch_processer(batch)
-        optim_sex.zero_grad()
-        self.manual_backward(loss_sex)
-        optim_sex.step()
-
-        _, _, loss_race, _ = batch_processer(batch)
-        optim_race.zero_grad()
-        self.manual_backward(loss_race)
-        optim_race.step()
+        if invariant_rep:
+            optim_backbone.step()
 
     def validation_step(self, batch, batch_idx):
-        loss_disease, loss_sex, loss_race, loss_inv = self.process_batch(batch)
+        loss_disease, loss_inv = self.process_batch(batch)
         self.log_dict({
             "val_loss_disease": loss_disease, 
-            "val_loss_sex": loss_sex, 
-            "val_loss_race": loss_race,
             "val_loss_inv": loss_inv,
         })
 
     def test_step(self, batch, batch_idx):
-        loss_disease, loss_sex, loss_race, loss_inv = self.process_batch(batch)
+        loss_disease, loss_inv = self.process_batch(batch)
         self.log_dict({
             "test_loss_disease": loss_disease, 
-            "test_loss_sex": loss_sex, 
-            "test_loss_race": loss_race,
             "test_loss_inv": loss_inv,
         })
 
@@ -457,24 +494,20 @@ class ResNet(BaseNet):
     def __init__(
         self,
         num_classes_disease,
-        num_classes_sex,
-        num_classes_race,
-        class_weights_race,
         inv_loss_coefficient,
+        lr_backbone=0.001,
+        lr_disease=0.001,
     ):
         super().__init__(
             num_classes_disease,
-            num_classes_sex,
-            num_classes_race,
-            class_weights_race,
             inv_loss_coefficient,
+            lr_backbone,
+            lr_disease,
         )
         self.automatic_optimization = False  # Manual optimization needed
-        self.backbone = models.resnet34(pretrained=True)
+        self.backbone = models.resnet34(weights='IMAGENET1K_V1')
         num_features = self.backbone.fc.in_features
         self.fc_disease = nn.Linear(num_features, self.num_classes_disease)
-        self.fc_sex = nn.Linear(num_features, self.num_classes_sex)
-        self.fc_race = nn.Linear(num_features, self.num_classes_race)
         self.fc_connect = nn.Identity(num_features)
         self.backbone.fc = self.fc_connect
 
@@ -484,25 +517,20 @@ class DenseNet(BaseNet):
     def __init__(
         self,
         num_classes_disease,
-        num_classes_sex,
-        num_classes_race,
-        class_weights_race,
         inv_loss_coefficient,
+        lr_backbone=0.001,
+        lr_disease=0.001,
     ):
         super().__init__(
             num_classes_disease,
-            num_classes_sex,
-            num_classes_race,
-            class_weights_race,
             inv_loss_coefficient,
+            lr_backbone,
+            lr_disease,
         )
         self.automatic_optimization = False  # Manual optimization needed
-        self.class_weights_race = torch.FloatTensor(class_weights_race)
-        self.backbone = models.densenet121(pretrained=True)
+        self.backbone = models.densenet121(weights='IMAGENET1K_V1')
         num_features = self.backbone.classifier.in_features
         self.fc_disease = nn.Linear(num_features, self.num_classes_disease)
-        self.fc_sex = nn.Linear(num_features, self.num_classes_sex)
-        self.fc_race = nn.Linear(num_features, self.num_classes_race)
         self.fc_connect = nn.Identity(num_features)
         self.backbone.classifier = self.fc_connect
 
@@ -511,166 +539,176 @@ def test(model, data_loader, device):
     model.eval()
     logits_disease = []
     preds_disease = []
+    embeddings = []
     targets_disease = []
-    logits_sex = []
-    preds_sex = []
-    targets_sex = []
-    logits_race = []
-    preds_race = []
-    targets_race = []
+    targets_protected_attributes = []
 
     with torch.no_grad():
         for index, batch in enumerate(tqdm(data_loader, desc='Test-loop')):
-            img, lab_disease, lab_sex, lab_race = batch['image'].to(device), batch['label_disease'].to(device), batch['label_sex'].to(device), batch['label_race'].to(device)
-            _, out_disease, out_sex, out_race = model(img)
+            img, lab_disease, protected_attribute = batch['image'].to(device), batch['label_disease'].to(device), batch['protected_attribute'].to(device)
+            embedding, out_disease = model(img)
 
             pred_disease = torch.sigmoid(out_disease)
-            pred_sex = torch.softmax(out_sex, dim=1)
-            pred_race = torch.softmax(out_race, dim=1)
 
             logits_disease.append(out_disease)
             preds_disease.append(pred_disease)
             targets_disease.append(lab_disease)
 
-            logits_sex.append(out_sex)
-            preds_sex.append(pred_sex)
-            targets_sex.append(lab_sex)
+            embeddings.append(embedding)
+            targets_protected_attributes.append(protected_attribute)
 
-            logits_race.append(out_race)
-            preds_race.append(pred_race)
-            targets_race.append(lab_race)
-
+        embeddings = torch.cat(embeddings, dim=0)
         logits_disease = torch.cat(logits_disease, dim=0)
         preds_disease = torch.cat(preds_disease, dim=0)
         targets_disease = torch.cat(targets_disease, dim=0)
+        targets_protected_attributes = torch.cat(targets_protected_attributes, dim=0)
 
-        logits_sex = torch.cat(logits_sex, dim=0)
-        preds_sex = torch.cat(preds_sex, dim=0)
-        targets_sex = torch.cat(targets_sex, dim=0)
+        info = {'global': {}, 'sub-group': {}}
 
-        logits_race = torch.cat(logits_race, dim=0)
-        preds_race = torch.cat(preds_race, dim=0)
-        targets_race = torch.cat(targets_race, dim=0)
-
-        counts = []
-        for i in range(0,num_classes_disease):
+        for i in range(0, num_classes_disease):
             t = targets_disease[:, i] == 1
-            c = torch.sum(t)
-            counts.append(c)
-        print(counts)
+            c = torch.sum(t).item()
+            info['global'][i] = int(c)
 
-        counts = []
-        for i in range(0,num_classes_sex):
-            t = targets_sex == i
-            c = torch.sum(t)
-            counts.append(c)
-        print(counts)
+        for j in torch.unique(targets_protected_attributes):
+            info['sub-group'][int(j.item())] = {}
+            for i in range(0, num_classes_disease):
+                t = targets_disease[targets_protected_attributes == j] == i
+                c = torch.sum(t).item()
+                info['sub-group'][int(j.item())][i] = int(c)
 
-        counts = []
-        for i in range(0,num_classes_race):
-            t = targets_race == i
-            c = torch.sum(t)
-            counts.append(c)
-        print(counts)
+        print(json.dumps(info, indent=4))
 
-    return preds_disease.cpu().numpy(), targets_disease.cpu().numpy(), logits_disease.cpu().numpy(), preds_sex.cpu().numpy(), targets_sex.cpu().numpy(), logits_sex.cpu().numpy(), preds_race.cpu().numpy(), targets_race.cpu().numpy(), logits_race.cpu().numpy()
-
-
-def embeddings(model, data_loader, device):
-    model.eval()
-
-    embeds = []
-    targets_disease = []
-    targets_sex = []
-    targets_race = []
-
-    with torch.no_grad():
-        for index, batch in enumerate(tqdm(data_loader, desc='Test-loop')):
-            img, lab_disease, lab_sex, lab_race = batch['image'].to(device), batch['label_disease'].to(device), batch['label_sex'].to(device), batch['label_race'].to(device)
-            emb = model.backbone(img)
-            embeds.append(emb)
-            targets_disease.append(lab_disease)
-            targets_sex.append(lab_sex)
-            targets_race.append(lab_race)
-
-        embeds = torch.cat(embeds, dim=0)
-        targets_disease = torch.cat(targets_disease, dim=0)
-        targets_sex = torch.cat(targets_sex, dim=0)
-        targets_race = torch.cat(targets_race, dim=0)
-
-    return embeds.cpu().numpy(), targets_disease.cpu().numpy(), targets_sex.cpu().numpy(), targets_race.cpu().numpy()
+    return (
+        info,
+        embeddings.cpu().numpy(),
+        preds_disease.cpu().numpy(),
+        targets_disease.cpu().numpy(),
+        logits_disease.cpu().numpy(),
+        targets_protected_attributes.cpu().numpy(),
+    )
 
 
 def main(hparams):
     # sets seeds for numpy, torch, python.random and PYTHONHASHSEED.
     pl.seed_everything(42, workers=True)
 
-    # data
-    data = CheXpertDataModule(
-        csv_train_img='datafiles/chexpert/chexpert.sample.train.csv',
-        csv_val_img='datafiles/chexpert/chexpert.sample.val.csv',
-        csv_test_img='datafiles/chexpert/chexpert.sample.test.csv',
-        image_size=image_size,
-        pseudo_rgb=True,
-        batch_size=batch_size,
-        num_workers=num_workers,
-        nsamples=hparams.nsamples,
-        invariant_sampling=hparams.invariant_sampling,
-        use_cache=False,
-    )
-
     # model
     model_type = DenseNet
     model = model_type(
         num_classes_disease=num_classes_disease,
-        num_classes_sex=num_classes_sex,
-        num_classes_race=num_classes_race,
-        class_weights_race=class_weights_race,
         inv_loss_coefficient=hparams.inv_loss_coefficient,
     )
 
     # Create output directory
-    if hparams.invariant_sampling:
-        out_name = f'invariant-densenet-all-nsamples-{hparams.nsamples}-{hparams.inv_loss_coefficient}'
+    logdir = "logs_test" if hparams.test else "logs"
+    if hparams.dataset_train == hparams.dataset_test:
+        # attribute_transfer
+        out_dir = f'{logdir}/{model_type.__name__}/{hparams.dataset_train}/{hparams.protected_race_set_train}_{hparams.protected_race_set_test}'
+        dm_class = CheXpertDataModule if hparams.dataset_train == 'chexpert' else MIMICDataModule
+        data_train = dm_class(
+            csv_train_img='datafiles/chexpert/chexpert.sample.train.csv',
+            csv_val_img='datafiles/chexpert/chexpert.sample.val.csv',
+            csv_test_img='datafiles/chexpert/chexpert.sample.test.csv',
+            image_size=image_size,
+            pseudo_rgb=True,
+            batch_size=batch_size,
+            num_workers=num_workers,
+            nsamples=hparams.nsamples,
+            invariant_sampling=hparams.invariant_sampling,
+            use_cache=False,
+            protected_race_set_train=hparams.protected_race_set_train,
+            protected_race_set_test=hparams.protected_race_set_train,
+        )
+        data_test = dm_class(
+            csv_train_img='datafiles/chexpert/chexpert.sample.train.csv',
+            csv_val_img='datafiles/chexpert/chexpert.sample.val.csv',
+            csv_test_img='datafiles/chexpert/chexpert.sample.test.csv',
+            image_size=image_size,
+            pseudo_rgb=True,
+            batch_size=batch_size,
+            num_workers=num_workers,
+            nsamples=hparams.nsamples,
+            invariant_sampling=hparams.invariant_sampling,
+            use_cache=False,
+            protected_race_set_train=hparams.protected_race_set_train,
+            protected_race_set_test=hparams.protected_race_set_test,
+        )
     else:
-        out_name = 'densenet-all'
+        # dataset transfer
+        out_dir = f'{logdir}/{model_type.__name__}/{hparams.dataset_train}_{hparams.dataset_test}'
+        dm_class_train = CheXpertDataModule if hparams.dataset_train == 'chexpert' else MIMICDataModule
+        dm_class_test = CheXpertDataModule if hparams.dataset_test == 'chexpert' else MIMICDataModule
+        data_train = dm_class_train(
+            csv_train_img='datafiles/chexpert/chexpert.sample.train.csv',
+            csv_val_img='datafiles/chexpert/chexpert.sample.val.csv',
+            csv_test_img='datafiles/chexpert/chexpert.sample.test.csv',
+            image_size=image_size,
+            pseudo_rgb=True,
+            batch_size=batch_size,
+            num_workers=num_workers,
+            nsamples=hparams.nsamples,
+            invariant_sampling=hparams.invariant_sampling,
+            use_cache=False,
+            protected_race_set_train=hparams.protected_race_set_train,
+            protected_race_set_test=hparams.protected_race_set_test,
+        )
+        data_test = dm_class_test(
+            csv_train_img='datafiles/chexpert/chexpert.sample.train.csv',
+            csv_val_img='datafiles/chexpert/chexpert.sample.val.csv',
+            csv_test_img='datafiles/chexpert/chexpert.sample.test.csv',
+            image_size=image_size,
+            pseudo_rgb=True,
+            batch_size=batch_size,
+            num_workers=num_workers,
+            nsamples=hparams.nsamples,
+            invariant_sampling=hparams.invariant_sampling,
+            use_cache=False,
+            protected_race_set_train=hparams.protected_race_set_train,
+            protected_race_set_test=hparams.protected_race_set_test,
+        )
 
-    out_dir = 'chexpert/multitask/' + out_name
-    if not os.path.exists(out_dir):
-        os.makedirs(out_dir)
+    if hparams.invariant_sampling:
+        out_dir = os.path.join(out_dir, f"invariant_nsamples_{hparams.nsamples}")
+    else:
+        out_dir = os.path.join(out_dir, "non_invariant")
+    os.makedirs(out_dir, exist_ok=True)
 
     temp_dir = os.path.join(out_dir, 'temp')
-    if not os.path.exists(temp_dir):
-        os.makedirs(temp_dir)
+    os.makedirs(temp_dir, exist_ok=True)
 
-    for idx in range(0,5):
-        sample = data.val_set.get_sample(idx)
-        imsave(os.path.join(temp_dir, 'sample_' + str(idx) + '.jpg'), sample['image'].numpy().astype(np.uint8))
+    for idx in range(0, 5):
+        sample = data_train.val_set.get_sample(idx)
+        imsave(
+            os.path.join(temp_dir, 'sample_' + str(idx) + '.jpg'),
+            sample['image'].numpy().astype(np.uint8),
+        )
 
     checkpoint_callback = ModelCheckpoint(
         monitor="val_loss_disease",
         mode="min",
-        every_n_train_steps=100,
         save_last=True,
     )
 
     # train
     trainer = pl.Trainer(
-        callbacks=[checkpoint_callback],  #, checkpoint_callback_val_disease],
+        callbacks=[checkpoint_callback],
         log_every_n_steps=5,
         max_epochs=epochs,
         devices=hparams.gpus,
-        logger=TensorBoardLogger('chexpert/multitask', name=out_name),
+        logger=TensorBoardLogger(out_dir),
+        max_steps=5 if hparams.test else -1,
     )
     trainer.logger._default_hp_metric = False
-    trainer.fit(model, data)
+    trainer.fit(model, data_train)
 
+    if hparams.test:
+        model_path = trainer.checkpoint_callback.last_model_path
+    else:
+        model_path = trainer.checkpoint_callback.best_model_path
     model = model_type.load_from_checkpoint(
-        trainer.checkpoint_callback.best_model_path,
+        model_path, 
         num_classes_disease=num_classes_disease,
-        num_classes_sex=num_classes_sex,
-        num_classes_race=num_classes_race,
-        class_weights_race=class_weights_race,
         inv_loss_coefficient=hparams.inv_loss_coefficient,
     )
 
@@ -679,84 +717,61 @@ def main(hparams):
 
     model.to(device)
 
-    cols_names_classes_disease = ['class_' + str(i) for i in range(0, num_classes_disease)]
-    cols_names_logits_disease = ['logit_' + str(i) for i in range(0, num_classes_disease)]
-    cols_names_targets_disease = ['target_' + str(i) for i in range(0, num_classes_disease)]
+    def output_df(dataloader):
+        info, embeddings, preds_disease, targets_disease, logits_disease, target_protected_attributes = test(model, dataloader, device)
+    
+        cols_names_classes_disease = ['class_' + str(i) for i in range(0, num_classes_disease)]
+        cols_names_logits_disease = ['logit_' + str(i) for i in range(0, num_classes_disease)]
+        cols_names_targets_disease = ['target_' + str(i) for i in range(0, num_classes_disease)]
 
-    cols_names_classes_sex = ['class_' + str(i) for i in range(0, num_classes_sex)]
-    cols_names_logits_sex = ['logit_' + str(i) for i in range(0, num_classes_sex)]
+        df = pd.DataFrame(data=preds_disease, columns=cols_names_classes_disease)
+        df_logits = pd.DataFrame(data=logits_disease, columns=cols_names_logits_disease)
+        df_targets = pd.DataFrame(data=targets_disease, columns=cols_names_targets_disease)
+        df_protected_attributes = pd.DataFrame(data=target_protected_attributes, columns=['Protected'])
+        df = pd.concat([df, df_logits, df_targets, df_protected_attributes], axis=1)
 
-    cols_names_classes_race = ['class_' + str(i) for i in range(0, num_classes_race)]
-    cols_names_logits_race = ['logit_' + str(i) for i in range(0, num_classes_race)]
+        df_embed = pd.DataFrame(data=embeddings)
+        df_embed = pd.concat([df_embed, df_targets, df_protected_attributes], axis=1)
+        
+        return info, df, df_embed
 
     print('VALIDATION')
-    preds_val_disease, targets_val_disease, logits_val_disease, preds_val_sex, targets_val_sex, logits_val_sex, preds_val_race, targets_val_race, logits_val_race = test(model, data.val_dataloader(), device)
-    
-    df = pd.DataFrame(data=preds_val_disease, columns=cols_names_classes_disease)
-    df_logits = pd.DataFrame(data=logits_val_disease, columns=cols_names_logits_disease)
-    df_targets = pd.DataFrame(data=targets_val_disease, columns=cols_names_targets_disease)
-    df = pd.concat([df, df_logits, df_targets], axis=1)
-    df.to_csv(os.path.join(out_dir, 'predictions.val.disease.csv'), index=False)
+    info, df_metrics, df_embedding = output_df(data_train.val_dataloader())
+    with open(os.path.join(out_dir, 'count_info_val.json'), 'w') as f:
+        json.dump(info, f, indent=4)
+    df_metrics.to_csv(os.path.join(out_dir, 'predictions.val.csv'), index=False)
+    df_embedding.to_csv(os.path.join(out_dir, 'embeddings.val.csv'), index=False)
 
-    df = pd.DataFrame(data=preds_val_sex, columns=cols_names_classes_sex)
-    df_logits = pd.DataFrame(data=logits_val_sex, columns=cols_names_logits_sex)
-    df = pd.concat([df, df_logits], axis=1)
-    df['target'] = targets_val_sex
-    df.to_csv(os.path.join(out_dir, 'predictions.val.sex.csv'), index=False)
+    print('Train-Test')
+    info, df_metrics, df_embedding = output_df(data_train.test_dataloader())
+    with open(os.path.join(out_dir, 'count_info_test.json'), 'w') as f:
+        json.dump(info, f, indent=4)
+    df_metrics.to_csv(os.path.join(out_dir, 'predictions.test.csv'), index=False)
+    df_embedding.to_csv(os.path.join(out_dir, 'embeddings.test.csv'), index=False)
 
-    df = pd.DataFrame(data=preds_val_race, columns=cols_names_classes_race)
-    df_logits = pd.DataFrame(data=logits_val_race, columns=cols_names_logits_race)
-    df = pd.concat([df, df_logits], axis=1)
-    df['target'] = targets_val_race
-    df.to_csv(os.path.join(out_dir, 'predictions.val.race.csv'), index=False)
-
-    print('TESTING')
-    preds_test_disease, targets_test_disease, logits_test_disease, preds_test_sex, targets_test_sex, logits_test_sex, preds_test_race, targets_test_race, logits_test_race = test(model, data.test_dataloader(), device)
-    
-    df = pd.DataFrame(data=preds_test_disease, columns=cols_names_classes_disease)
-    df_logits = pd.DataFrame(data=logits_test_disease, columns=cols_names_logits_disease)
-    df_targets = pd.DataFrame(data=targets_test_disease, columns=cols_names_targets_disease)
-    df = pd.concat([df, df_logits, df_targets], axis=1)
-    df.to_csv(os.path.join(out_dir, 'predictions.test.disease.csv'), index=False)
-
-    df = pd.DataFrame(data=preds_test_sex, columns=cols_names_classes_sex)
-    df_logits = pd.DataFrame(data=logits_test_sex, columns=cols_names_logits_sex)
-    df = pd.concat([df, df_logits], axis=1)
-    df['target'] = targets_test_sex
-    df.to_csv(os.path.join(out_dir, 'predictions.test.sex.csv'), index=False)
-
-    df = pd.DataFrame(data=preds_test_race, columns=cols_names_classes_race)
-    df_logits = pd.DataFrame(data=logits_test_race, columns=cols_names_logits_race)
-    df = pd.concat([df, df_logits], axis=1)
-    df['target'] = targets_test_race
-    df.to_csv(os.path.join(out_dir, 'predictions.test.race.csv'), index=False)
-
-    print('EMBEDDINGS')
-    embeds_val, targets_val_disease, targets_val_sex, targets_val_race = embeddings(model, data.val_dataloader(), device)
-    df = pd.DataFrame(data=embeds_val)
-    df_targets_disease = pd.DataFrame(data=targets_val_disease, columns=cols_names_targets_disease)
-    df = pd.concat([df, df_targets_disease], axis=1)
-    df['target_sex'] = targets_val_sex
-    df['target_race'] = targets_val_race
-    df.to_csv(os.path.join(out_dir, 'embeddings.val.csv'), index=False)
-
-    embeds_test, targets_test_disease, targets_test_sex, targets_test_race = embeddings(model, data.test_dataloader(), device)
-    df = pd.DataFrame(data=embeds_test)
-    df_targets_disease = pd.DataFrame(data=targets_test_disease, columns=cols_names_targets_disease)
-    df = pd.concat([df, df_targets_disease], axis=1)
-    df['target_sex'] = targets_test_sex
-    df['target_race'] = targets_test_race
-    df.to_csv(os.path.join(out_dir, 'embeddings.test.csv'), index=False)
+    print('OOD Test')
+    info, df_metrics, df_embedding = output_df(data_test.test_dataloader())
+    with open(os.path.join(out_dir, 'count_info_ood.json'), 'w') as f:
+        json.dump(info, f, indent=4)
+    df_metrics.to_csv(os.path.join(out_dir, 'predictions.ood.csv'), index=False)
+    df_embedding.to_csv(os.path.join(out_dir, 'embeddings.ood.csv'), index=False)
 
 
 def cli():
     parser = ArgumentParser()
-    parser.add_argument('--gpus', type = int, default=1)
-    parser.add_argument('--dev', type = int, default=0)
+    parser.add_argument('--gpus', type=int, default=1)
+    parser.add_argument('--dev', type=int, default=0)
+    parser.add_argument('--test', action="store_true")
 
     parser.add_argument('--nsamples', type=int, default=1)
-    parser.add_argument('--inv_loss_coefficient', type=int, default=1)
-    parser.add_argument('--invariant_sampling', action='store_true')
+    parser.add_argument('--inv-loss-coefficient', type=int, default=1)
+    parser.add_argument('--invariant-sampling', action='store_true')
+
+    parser.add_argument('--protected-race-set-train', nargs='+', type=int, default=[0, 1, 2, 3])
+    parser.add_argument('--protected-race-set-test', nargs='+', type=int, default=[0, 1, 2, 3])
+
+    parser.add_argument('--dataset-train', choices=["mimic", "chexpert"], default="chexpert")
+    parser.add_argument('--dataset-test', choices=["mimic", "chexpert"], default="chexpert")
     args = parser.parse_args()
 
     main(args)
