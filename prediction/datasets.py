@@ -30,6 +30,8 @@ class CXRDataset(Dataset):
         self.invariant_sampling = invariant_sampling
         self.use_cache = use_cache
         self.protected_race_set = protected_race_set
+        self.nsamples = nsamples
+
 
         self.labels = ['No Finding', 'Pleural Effusion']
 
@@ -50,7 +52,6 @@ class CXRDataset(Dataset):
 
             protected_race_probs = 1. / protected_race_counts
 
-            self.nsamples = nsamples
             self.protected_race_probs = protected_race_probs / np.sum(protected_race_probs)
 
             self.label_list = []

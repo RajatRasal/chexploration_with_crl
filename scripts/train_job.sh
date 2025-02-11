@@ -4,8 +4,13 @@
 #SBATCH --job-name=invariant
 #SBATCH --output=./slurm_logs/slurm.%N.%j.log
 
-export PATH="/vol/biomedic3/agk21/anaconda3/envs/chexploration/bin:/vol/biomedic3/rrr2417/.local/bin:$PATH"
+# export PATH="/vol/biomedic3/agk21/anaconda3/envs/chexploration/bin:/vol/biomedic3/rrr2417/.local/bin:$PATH"
 # export PYTHON_KEYRING_BACKEND=keyring.backends.null.Keyring
+
+# Source Virtual environment (conda)
+. "/vol/biomedic3/agk21/anaconda3/etc/profile.d/conda.sh"
+
+conda activate chexploration
 
 TRAIN_ARGS="""
     --nsamples $1 \
