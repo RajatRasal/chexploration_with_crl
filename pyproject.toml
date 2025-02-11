@@ -12,7 +12,7 @@ packages = [
 
 [tool.poetry.scripts]
 setup_data = "datafiles.setup_data:main"
-chexpert_train = "prediction.chexpert_multitask:cli"
+chexpert_train = "prediction.race_invariance:cli"
 chexpert_disease_detection = "notebooks.results_disease_detection:main"
 
 [tool.poetry.dependencies]

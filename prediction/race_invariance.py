@@ -28,23 +28,8 @@ num_classes_disease = 2
 batch_size = 32
 epochs = 10
 num_workers = 4
-img_data_dir = os.getenv("CHEXPERT_FOLDER")
-
-
-class MIMIC(Dataset):
-    
-    def __init__(
-        self,
-        csv_file_img,
-        image_size, 
-        augmentation=False, 
-        pseudo_rgb=True,
-        use_cache=False,
-        nsamples=2,
-        invariant_sampling=False,
-        protected_race_set=[0, 1],
-    ):
-        pass
+chexpert_img_data_dir = os.getenv("CHEXPERT_FOLDER")
+mimic_img_data_dir = os.getenv("MIMIC_FOLDER")
 
 
 class CheXpertDataset(Dataset):
@@ -53,6 +38,7 @@ class CheXpertDataset(Dataset):
         self,
         csv_file_img,
         image_size, 
+        img_data_dir,
         augmentation=False, 
         pseudo_rgb=True,
         use_cache=False,
@@ -60,6 +46,7 @@ class CheXpertDataset(Dataset):
         invariant_sampling=False,
         protected_race_set=[0, 1],
     ):
+
         self.data = pd.read_csv(csv_file_img)
         self.image_size = image_size
         self.do_augment = augmentation
@@ -253,7 +240,8 @@ class CheXpertDataModule(pl.LightningDataModule):
         image_size, 
         pseudo_rgb, 
         batch_size, 
-        num_workers,  
+        num_workers, 
+        img_data_dir, 
         use_cache=False,
         nsamples=2,
         invariant_sampling=False,
@@ -276,6 +264,7 @@ class CheXpertDataModule(pl.LightningDataModule):
         self.train_set = CheXpertDataset(
             self.csv_train_img, 
             self.image_size, 
+            img_data_dir,
             augmentation=True, 
             pseudo_rgb=pseudo_rgb,
             use_cache=self.use_cache,
@@ -286,6 +275,7 @@ class CheXpertDataModule(pl.LightningDataModule):
         self.val_set = CheXpertDataset(
             self.csv_val_img, 
             self.image_size, 
+            img_data_dir,
             augmentation=False, 
             pseudo_rgb=pseudo_rgb,
             nsamples=1,
@@ -295,6 +285,7 @@ class CheXpertDataModule(pl.LightningDataModule):
         self.test_set = CheXpertDataset(
             self.csv_test_img,
             self.image_size,
+            img_data_dir,
             augmentation=False,
             pseudo_rgb=pseudo_rgb,
             nsamples=1,
@@ -315,78 +306,6 @@ class CheXpertDataModule(pl.LightningDataModule):
     def test_dataloader(self):
         return DataLoader(self.test_set, self.batch_size, shuffle=False, num_workers=self.num_workers)
 
-
-class MIMICDataModule(pl.LightningDataModule):
-
-    def __init__(
-        self,
-        csv_train_img, 
-        csv_val_img, 
-        csv_test_img, 
-        image_size, 
-        pseudo_rgb, 
-        batch_size, 
-        num_workers,  
-        use_cache=False,
-        nsamples=2,
-        invariant_sampling=False,
-        protected_race_set_train=[0, 1, 2, 3],
-        protected_race_set_test=[0, 1, 2, 3],
-    ):
-        super().__init__()
-        self.csv_train_img = csv_train_img
-        self.csv_val_img = csv_val_img
-        self.csv_test_img = csv_test_img
-        self.image_size = image_size
-        self.batch_size = batch_size
-        self.num_workers = num_workers
-        self.nsamples = nsamples
-        self.use_cache = use_cache
-        self.invariant_sampling = invariant_sampling
-        self.protected_race_set_train = protected_race_set_train
-        self.protected_race_set_test = protected_race_set_test
-
-        self.train_set = CheXpertDataset(
-            self.csv_train_img, 
-            self.image_size, 
-            augmentation=True, 
-            pseudo_rgb=pseudo_rgb,
-            use_cache=self.use_cache,
-            nsamples=self.nsamples,
-            invariant_sampling=self.invariant_sampling,
-            protected_race_set=self.protected_race_set_train,
-        )
-        self.val_set = CheXpertDataset(
-            self.csv_val_img, 
-            self.image_size, 
-            augmentation=False, 
-            pseudo_rgb=pseudo_rgb,
-            nsamples=1,
-            invariant_sampling=False,
-            protected_race_set=self.protected_race_set_train,
-        )
-        self.test_set = CheXpertDataset(
-            self.csv_test_img,
-            self.image_size,
-            augmentation=False,
-            pseudo_rgb=pseudo_rgb,
-            nsamples=1,
-            invariant_sampling=False,
-            protected_race_set=self.protected_race_set_test,
-        )
-
-        print('#train: ', len(self.train_set))
-        print('#val:   ', len(self.val_set))
-        print('#test:  ', len(self.test_set))
-
-    def train_dataloader(self):
-        return DataLoader(self.train_set, self.batch_size, shuffle=True, num_workers=self.num_workers)
-
-    def val_dataloader(self):
-        return DataLoader(self.val_set, self.batch_size, shuffle=False, num_workers=self.num_workers)
-
-    def test_dataloader(self):
-        return DataLoader(self.test_set, self.batch_size, shuffle=False, num_workers=self.num_workers)
 
 
 class BaseNet(ABC, pl.LightningModule):
@@ -591,10 +510,16 @@ def test(model, data_loader, device):
 
 def main(hparams):
     # sets seeds for numpy, torch, python.random and PYTHONHASHSEED.
-    pl.seed_everything(42, workers=True)
+    pl.seed_everything(hparams.seed, workers=True)
 
     # model
-    model_type = DenseNet
+    if hparams.model_type == 'densenet':
+        model_type = DenseNet
+    elif hparams.model_type == 'resnet':
+        model_type = ResNet
+    else:
+        raise NotImplementedError
+
     model = model_type(
         num_classes_disease=num_classes_disease,
         inv_loss_coefficient=hparams.inv_loss_coefficient,
@@ -605,11 +530,23 @@ def main(hparams):
     if hparams.dataset_train == hparams.dataset_test:
         # attribute_transfer
         out_dir = f'{logdir}/{model_type.__name__}/{hparams.dataset_train}/{hparams.protected_race_set_train}_{hparams.protected_race_set_test}'
-        dm_class = CheXpertDataModule if hparams.dataset_train == 'chexpert' else MIMICDataModule
-        data_train = dm_class(
-            csv_train_img='datafiles/chexpert/chexpert.sample.train.csv',
-            csv_val_img='datafiles/chexpert/chexpert.sample.val.csv',
-            csv_test_img='datafiles/chexpert/chexpert.sample.test.csv',
+
+        if hparams.dataset_train == 'chexpert':
+            csv_train_img='datafiles/chexpert/chexpert.sample.train.csv'
+            csv_val_img='datafiles/chexpert/chexpert.sample.val.csv'
+            csv_test_img='datafiles/chexpert/chexpert.sample.test.csv'
+            img_data_dir=chexpert_img_data_dir
+        else:
+            csv_train_img='datafiles/mimic/mimic.sample.train.csv'
+            csv_val_img='datafiles/mimic/mimic.sample.val.csv'
+            csv_test_img='datafiles/mimic/mimic.sample.test.csv'
+            img_data_dir=mimic_img_data_dir
+        
+        data_train = CheXpertDataModule(
+            csv_train_img=csv_train_img,
+            csv_val_img=csv_val_img,
+            csv_test_img=csv_test_img,
+            img_data_dir=img_data_dir,
             image_size=image_size,
             pseudo_rgb=True,
             batch_size=batch_size,
@@ -620,10 +557,11 @@ def main(hparams):
             protected_race_set_train=hparams.protected_race_set_train,
             protected_race_set_test=hparams.protected_race_set_train,
         )
-        data_test = dm_class(
-            csv_train_img='datafiles/chexpert/chexpert.sample.train.csv',
-            csv_val_img='datafiles/chexpert/chexpert.sample.val.csv',
-            csv_test_img='datafiles/chexpert/chexpert.sample.test.csv',
+        data_test = CheXpertDataModule(
+            csv_train_img=csv_train_img,
+            csv_val_img=csv_val_img,
+            csv_test_img=csv_test_img,
+            img_data_dir=img_data_dir,
             image_size=image_size,
             pseudo_rgb=True,
             batch_size=batch_size,
@@ -632,17 +570,29 @@ def main(hparams):
             invariant_sampling=hparams.invariant_sampling,
             use_cache=False,
             protected_race_set_train=hparams.protected_race_set_train,
-            protected_race_set_test=hparams.protected_race_set_test,
+            protected_race_set_test=hparams.protected_race_set_test, # Different from data_train module
         )
     else:
         # dataset transfer
         out_dir = f'{logdir}/{model_type.__name__}/{hparams.dataset_train}_{hparams.dataset_test}'
-        dm_class_train = CheXpertDataModule if hparams.dataset_train == 'chexpert' else MIMICDataModule
-        dm_class_test = CheXpertDataModule if hparams.dataset_test == 'chexpert' else MIMICDataModule
-        data_train = dm_class_train(
-            csv_train_img='datafiles/chexpert/chexpert.sample.train.csv',
-            csv_val_img='datafiles/chexpert/chexpert.sample.val.csv',
-            csv_test_img='datafiles/chexpert/chexpert.sample.test.csv',
+
+        # train set
+        if hparams.dataset_train == 'chexpert':
+            csv_train_img='datafiles/chexpert/chexpert.sample.train.csv'
+            csv_val_img='datafiles/chexpert/chexpert.sample.val.csv'
+            csv_test_img='datafiles/chexpert/chexpert.sample.test.csv'
+            img_data_dir=chexpert_img_data_dir
+        else:
+            csv_train_img='datafiles/mimic/mimic.sample.train.csv'
+            csv_val_img='datafiles/mimic/mimic.sample.val.csv'
+            csv_test_img='datafiles/mimic/mimic.sample.test.csv'
+            img_data_dir=mimic_img_data_dir
+        
+        data_train = CheXpertDataModule(
+            csv_train_img=csv_train_img,
+            csv_val_img=csv_val_img,
+            csv_test_img=csv_test_img,
+            img_data_dir=img_data_dir,
             image_size=image_size,
             pseudo_rgb=True,
             batch_size=batch_size,
@@ -653,11 +603,25 @@ def main(hparams):
             protected_race_set_train=hparams.protected_race_set_train,
             protected_race_set_test=hparams.protected_race_set_test,
         )
-        data_test = dm_class_test(
-            csv_train_img='datafiles/chexpert/chexpert.sample.train.csv',
-            csv_val_img='datafiles/chexpert/chexpert.sample.val.csv',
-            csv_test_img='datafiles/chexpert/chexpert.sample.test.csv',
+
+        # Test set 
+        if hparams.dataset_test == 'chexpert':
+            csv_train_img='datafiles/chexpert/chexpert.sample.train.csv'
+            csv_val_img='datafiles/chexpert/chexpert.sample.val.csv'
+            csv_test_img='datafiles/chexpert/chexpert.sample.test.csv'
+            img_data_dir=chexpert_img_data_dir
+        else:
+            csv_train_img='datafiles/mimic/mimic.sample.train.csv'
+            csv_val_img='datafiles/mimic/mimic.sample.val.csv'
+            csv_test_img='datafiles/mimic/mimic.sample.test.csv'
+            img_data_dir=mimic_img_data_dir
+
+        data_test = CheXpertDataModule(
+            csv_train_img=csv_train_img,
+            csv_val_img=csv_val_img,
+            csv_test_img=csv_test_img,
             image_size=image_size,
+            img_data_dir=img_data_dir,
             pseudo_rgb=True,
             batch_size=batch_size,
             num_workers=num_workers,
@@ -759,6 +723,8 @@ def main(hparams):
 
 def cli():
     parser = ArgumentParser()
+    parser.add_argument('--seed', type=int, default=42)
+
     parser.add_argument('--gpus', type=int, default=1)
     parser.add_argument('--dev', type=int, default=0)
     parser.add_argument('--test', action="store_true")
@@ -772,6 +738,8 @@ def cli():
 
     parser.add_argument('--dataset-train', choices=["mimic", "chexpert"], default="chexpert")
     parser.add_argument('--dataset-test', choices=["mimic", "chexpert"], default="chexpert")
+    parser.add_argument('--model-type', choices=["densenet", "resnet"], default="densenet")
+
     args = parser.parse_args()
 
     main(args)
