@@ -4,7 +4,7 @@
 #SBATCH --job-name=invariant
 #SBATCH --output=./slurm_logs/slurm.%N.%j.log
 
-export PATH="/vol/biomedic3/agk21/anaconda3/envs/chexploration/bin/poetry:/vol/biomedic3/rrr2417/.local/bin:$PATH"
+export PATH="/vol/biomedic3/agk21/anaconda3/envs/chexploration/bin:/vol/biomedic3/rrr2417/.local/bin:$PATH"
 export PYTHON_KEYRING_BACKEND=keyring.backends.null.Keyring
 
 TRAIN_ARGS="""
