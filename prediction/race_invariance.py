@@ -252,6 +252,7 @@ def main(hparams):
 
     model.to(device)
 
+    # Compute metrics and embeddings and write to CSV
     def output_dfs(dataloader):
         (
             info,
