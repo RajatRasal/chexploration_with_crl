@@ -17,6 +17,7 @@ import json
 
 from prediction.backbones import DenseNet, ResNet, ViTB16
 from prediction.datasets import CXRDataModule, CXRDataset
+from prediction.metrics import compute_metrics
 
 
 load_dotenv()
@@ -118,7 +119,12 @@ def main(hparams):
 
     # Setup datasets
     # Train set
-    csv_train_img, csv_val_img, csv_test_img, img_data_dir = datafiles(hparams.dataset_train)
+    (
+        csv_train_img,
+        csv_val_img,
+        csv_test_img,
+        img_data_dir,
+    ) = datafiles(hparams.dataset_train)
     if hparams.dataset_train == hparams.dataset_test:
         # Attribute_transfer - train with protected_race_set_train test with protected_race_set_test
         out_dir = f'{logdir}/{model_type.__name__}/{hparams.dataset_train}/{hparams.protected_race_set_train}_{hparams.protected_race_set_test}'
@@ -174,7 +180,12 @@ def main(hparams):
         )
 
         # Alternative test set 
-        test_csv_train_img, test_csv_val_img, test_csv_test_img, test_img_data_dir = datafiles(hparams.dataset_test)
+        (
+            test_csv_train_img,
+            test_csv_val_img,
+            test_csv_test_img,
+            test_img_data_dir,
+        ) = datafiles(hparams.dataset_test)
         data_test = CXRDataModule(
             csv_train_img=test_csv_train_img,
             csv_val_img=test_csv_val_img,
@@ -241,7 +252,7 @@ def main(hparams):
 
     model.to(device)
 
-    def output_df(dataloader):
+    def output_dfs(dataloader):
         (
             info,
             embeddings,
@@ -259,33 +270,32 @@ def main(hparams):
         df_logits = pd.DataFrame(data=logits_disease, columns=cols_names_logits_disease)
         df_targets = pd.DataFrame(data=targets_disease, columns=cols_names_targets_disease)
         df_protected_attributes = pd.DataFrame(data=target_protected_attributes, columns=['Protected'])
-        df = pd.concat([df, df_logits, df_targets, df_protected_attributes], axis=1)
+        df_preds = pd.concat([df, df_logits, df_targets, df_protected_attributes], axis=1)
+
+        df_metrics = compute_metrics(df_preds)
 
         df_embed = pd.DataFrame(data=embeddings)
         df_embed = pd.concat([df_embed, df_targets, df_protected_attributes], axis=1)
         
-        return info, df, df_embed
+        return info, df_preds, df_embed, df_metrics
 
-    print('Validation')
-    info, df_metrics, df_embedding = output_df(data_train.val_dataloader())
-    with open(os.path.join(out_dir, 'count_info_val.json'), 'w') as f:
-        json.dump(info, f, indent=4)
-    df_metrics.to_csv(os.path.join(out_dir, 'predictions.val.csv'), index=False)
-    df_embedding.to_csv(os.path.join(out_dir, 'embeddings.val.csv'), index=False)
+    dls = {
+        "val": data_train.val_dataloader(),
+        "test": data_train.test_dataloader(),
+        "ood": data_test.test_dataloader(),
+    }
+    def write_dfs(split: Literal["val", "test", "ood"]):
+        dl = dls[split]
+        info, df_preds, df_embedding, df_metrics = output_dfs(dl)
+        with open(os.path.join(out_dir, f'count_info_{split}.json'), 'w') as f:
+            json.dump(info, f, indent=4)
+        df_preds.to_csv(os.path.join(out_dir, f'predictions.{split}.csv'), index=False)
+        df_embedding.to_csv(os.path.join(out_dir, f'embeddings.{split}.csv'), index=False)
+        df_metrics.to_csv(os.path.join(out_dir, f'metrics.{split}.csv'), index=False)
 
-    print('Test')
-    info, df_metrics, df_embedding = output_df(data_train.test_dataloader())
-    with open(os.path.join(out_dir, 'count_info_test.json'), 'w') as f:
-        json.dump(info, f, indent=4)
-    df_metrics.to_csv(os.path.join(out_dir, 'predictions.test.csv'), index=False)
-    df_embedding.to_csv(os.path.join(out_dir, 'embeddings.test.csv'), index=False)
-
-    print('OOD Test')
-    info, df_metrics, df_embedding = output_df(data_test.test_dataloader())
-    with open(os.path.join(out_dir, 'count_info_ood.json'), 'w') as f:
-        json.dump(info, f, indent=4)
-    df_metrics.to_csv(os.path.join(out_dir, 'predictions.ood.csv'), index=False)
-    df_embedding.to_csv(os.path.join(out_dir, 'embeddings.ood.csv'), index=False)
+    write_dfs("val")
+    write_dfs("test")
+    write_dfs("ood")
 
 
 def cli():
