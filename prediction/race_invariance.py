@@ -64,14 +64,13 @@ class CheXpertDataset(Dataset):
 
         if self.invariant_sampling:
             # We have 3 races: 0, 1, 2
-            # protected_race_attributes = np.unique(self.data['race_label'].values)
-            # protected_race_counts = np.zeros_like(protected_race_attributes)
+            protected_race_attributes = np.unique(self.data['race_label'].values)
+            protected_race_counts = np.ones_like(protected_race_attributes)
             self.attribute_wise_samples = {}
-            protected_race_counts = np.zeros_like(self.protected_race_set)
 
-            for i, race in enumerate(self.protected_race_set):
+            for race in np.unique(protected_race_attributes):
                 self.attribute_wise_samples[race] = {}
-                protected_race_counts[i] = np.sum(1. * (self.data['race_label'].values == race))
+                protected_race_counts[race] = np.sum(1. * (self.data['race_label'].values == race))
 
             protected_race_probs = 1. / protected_race_counts
 
@@ -90,6 +89,7 @@ class CheXpertDataset(Dataset):
 
             if int(img_label_race) not in self.protected_race_set:
                 continue
+
             sample = {
                 'image_path': img_path,
                 'label_disease': img_label_disease,
@@ -197,10 +197,12 @@ class CheXpertDataset(Dataset):
         np.random.seed(item)
 
         disease = np.random.choice(self.label_list)
+        prob = self.protected_race_probs[self.protected_race_set]
+        prob = prob / np.sum(prob) #  renormalising
         race = np.random.choice(
-            len(self.protected_race_probs),
+            self.protected_race_set,
             self.nsamples,
-            p=self.protected_race_probs,
+            p=prob,
         )
         
         info = []
