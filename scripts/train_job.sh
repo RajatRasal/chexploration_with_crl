@@ -5,7 +5,7 @@
 #SBATCH --output=./slurm_logs/slurm.%N.%j.log
 
 # cd /vol/biomedic3/rrr2417/chexploration_with_crl
-# source ../.bashrc
+export PYTHON_KEYRING_BACKEND=keyring.backends.null.Keyring
 
 TRAIN_ARGS="""
     --nsamples $1 \
@@ -26,7 +26,12 @@ if [ "$9" = "1" ]; then
     TRAIN_ARGS="$TRAIN_ARGS --test"
 fi
 
-TRAIN_CMD="poetry run chexpert_train $TRAIN_ARGS"
+TRAIN_CMD="poetry run race_invariance $TRAIN_ARGS"
 echo $TRAIN_CMD
 
 eval $TRAIN_CMD
+
+if [ $? -ne 0 ]; then
+    echo Train job failed
+    exit 1
+fi
