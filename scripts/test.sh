@@ -58,3 +58,23 @@ else
     echo "Test 6 done"
 fi
 echo
+
+./scripts/train_job.sh 2 chexpert chexpert '2 1' '0' 42 resnet 1 1
+
+if [ $? -ne 0 ]; then
+    echo "Test 7 failed"
+    exit 1
+else
+    echo "Test 7 done"
+fi
+echo
+
+./scripts/train_job.sh 2 chexpert chexpert '2 1' '0' 42 vitb16 1 1
+
+if [ $? -ne 0 ]; then
+    echo "Test 8 failed"
+    exit 1
+else
+    echo "Test 8 done"
+fi
+echo

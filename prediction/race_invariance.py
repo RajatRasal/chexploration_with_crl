@@ -15,7 +15,7 @@ from argparse import ArgumentParser
 
 import json
 
-from prediction.backbones import DenseNet, ResNet
+from prediction.backbones import DenseNet, ResNet, ViTB16
 from prediction.datasets import CXRDataModule, CXRDataset
 
 
@@ -102,12 +102,11 @@ def main(hparams):
     pl.seed_everything(hparams.seed, workers=True)
 
     # model
-    if hparams.model_type == 'densenet':
-        model_type = DenseNet
-    elif hparams.model_type == 'resnet':
-        model_type = ResNet
-    else:
-        raise NotImplementedError
+    model_type = {
+        "densenet": DenseNet,
+        "resnet": ResNet,
+        "vitb16": ViTB16,
+    }[hparams.model_type]
 
     model = model_type(
         num_classes_disease=num_classes_disease,
@@ -267,14 +266,14 @@ def main(hparams):
         
         return info, df, df_embed
 
-    print('VALIDATION')
+    print('Validation')
     info, df_metrics, df_embedding = output_df(data_train.val_dataloader())
     with open(os.path.join(out_dir, 'count_info_val.json'), 'w') as f:
         json.dump(info, f, indent=4)
     df_metrics.to_csv(os.path.join(out_dir, 'predictions.val.csv'), index=False)
     df_embedding.to_csv(os.path.join(out_dir, 'embeddings.val.csv'), index=False)
 
-    print('Train-Test')
+    print('Test')
     info, df_metrics, df_embedding = output_df(data_train.test_dataloader())
     with open(os.path.join(out_dir, 'count_info_test.json'), 'w') as f:
         json.dump(info, f, indent=4)
@@ -306,7 +305,7 @@ def cli():
 
     parser.add_argument('--dataset-train', choices=["mimic", "chexpert"], default="chexpert")
     parser.add_argument('--dataset-test', choices=["mimic", "chexpert"], default="chexpert")
-    parser.add_argument('--model-type', choices=["densenet", "resnet"], default="densenet")
+    parser.add_argument('--model-type', choices=["densenet", "resnet", "vitb16"], default="densenet")
 
     args = parser.parse_args()
 

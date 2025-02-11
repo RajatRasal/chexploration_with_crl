@@ -127,8 +127,7 @@ class ResNet(BaseNet):
         self.backbone = models.resnet34(weights='IMAGENET1K_V1')
         num_features = self.backbone.fc.in_features
         self.fc_disease = nn.Linear(num_features, self.num_classes_disease)
-        self.fc_connect = nn.Identity(num_features)
-        self.backbone.fc = self.fc_connect
+        self.backbone.fc = nn.Identity(num_features)
 
 
 class DenseNet(BaseNet):
@@ -150,5 +149,26 @@ class DenseNet(BaseNet):
         self.backbone = models.densenet121(weights='IMAGENET1K_V1')
         num_features = self.backbone.classifier.in_features
         self.fc_disease = nn.Linear(num_features, self.num_classes_disease)
-        self.fc_connect = nn.Identity(num_features)
-        self.backbone.classifier = self.fc_connect
+        self.backbone.classifier = nn.Identity(num_features)
+
+
+class ViTB16(BaseNet):
+
+    def __init__(
+        self,
+        num_classes_disease,
+        inv_loss_coefficient,
+        lr_backbone=0.001,
+        lr_disease=0.001,
+    ):
+        super().__init__(
+            num_classes_disease,
+            inv_loss_coefficient,
+            lr_backbone,
+            lr_disease,
+        )
+        self.automatic_optimization = False  # Manual optimization needed
+        self.backbone = models.vit_b_16(weights='IMAGENET1K_V1')
+        num_features = self.backbone.heads.head.in_features
+        self.fc_disease = nn.Linear(num_features, self.num_classes_disease)
+        self.backbone.heads.head = nn.Identity(num_features)
