@@ -127,7 +127,7 @@ def main(hparams):
     ) = datafiles(hparams.dataset_train)
     if hparams.dataset_train == hparams.dataset_test:
         # Attribute_transfer - train with protected_race_set_train test with protected_race_set_test
-        out_dir = f'{logdir}/{model_type.__name__}/{hparams.dataset_train}/{hparams.protected_race_set_train}_{hparams.protected_race_set_test}'
+        out_dir = f'{logdir}/{model_type.__name__}-{hparams.seed}/{hparams.dataset_train}/{hparams.protected_race_set_train}_{hparams.protected_race_set_test}'
        
         data_train = CXRDataModule(
             csv_train_img=csv_train_img,
@@ -161,7 +161,7 @@ def main(hparams):
         )
     else:
         # Dataset transfer - train with data_train, test on data_test
-        out_dir = f'{logdir}/{model_type.__name__}/{hparams.dataset_train}_{hparams.dataset_test}'
+        out_dir = f'{logdir}/{model_type.__name__}-{hparams.seed}/{hparams.dataset_train}_{hparams.dataset_test}'
        
         data_train = CXRDataModule(
             csv_train_img=csv_train_img,
