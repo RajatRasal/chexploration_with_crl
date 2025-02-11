@@ -4,7 +4,8 @@
 #SBATCH --job-name=invariant
 #SBATCH --output=./slurm_logs/slurm.%N.%j.log
 
-# cd /vol/biomedic3/rrr2417/chexploration_with_crl
+cd /vol/biomedic3/rrr2417/chexploration_with_crl
+source ../.bashrc
 export PYTHON_KEYRING_BACKEND=keyring.backends.null.Keyring
 
 TRAIN_ARGS="""
