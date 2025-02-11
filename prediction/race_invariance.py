@@ -25,7 +25,7 @@ load_dotenv()
 image_size = (224, 224)
 num_classes_disease = 2
 batch_size = 32
-epochs = 10
+epochs = 25
 num_workers = 4
 
 
