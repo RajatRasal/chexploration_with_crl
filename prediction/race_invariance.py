@@ -81,13 +81,15 @@ class CheXpertDataset(Dataset):
 
         self.samples = []
         for idx, _ in enumerate(tqdm(range(len(self.data)), desc='Loading Data')):
+            # Convert pandas rows into a dictionary which can be retrieved in __getitem__
             img_path = img_data_dir + self.data.loc[idx, 'path_preproc']
-            img_label_disease = np.zeros(len(self.labels), dtype='float32')
-            for i in range(0, len(self.labels)):
-                img_label_disease[i] = np.array(self.data.loc[idx, self.labels[i].strip()] == 1, dtype='float32')
-            img_label_race = np.array(self.data.loc[idx, 'race_label'], dtype='int64')
-
-            if int(img_label_race) not in self.protected_race_set:
+            img_label_disease = [
+                float(self.data.loc[idx, label] == 1)
+                for label in self.labels
+            ]
+            img_label_race = int(self.data.loc[idx, 'race_label'])
+            # Only include races in the protected race set
+            if img_label_race not in self.protected_race_set:
                 continue
 
             sample = {
@@ -98,19 +100,15 @@ class CheXpertDataset(Dataset):
             self.samples.append(sample)
 
             if self.invariant_sampling:
-                # invariant set selection -- update wrt task
-                img_label_disease_ = [
-                    img_label_disease[self.labels == 'No Finding'],
-                    img_label_disease[self.labels == 'Pleural Effusion'],
-                ]
-                key = ','.join(map(str, img_label_disease_))
-                if key not in self.attribute_wise_samples[int(img_label_race)]:
-                    self.attribute_wise_samples[int(img_label_race)][key] = []
+                # Build race invariant sets for the same diseases
+                disease_key = ''.join(map(str, img_label_disease))
+                if disease_key not in self.attribute_wise_samples[img_label_race]:
+                    self.attribute_wise_samples[img_label_race][disease_key] = []
 
-                self.attribute_wise_samples[int(img_label_race)][key].append(sample)
+                self.attribute_wise_samples[img_label_race][disease_key].append(sample)
 
-                if key not in self.label_list:
-                    self.label_list.append(key)
+                if disease_key not in self.label_list:
+                    self.label_list.append(disease_key)
 
         if self.use_cache:
             self.cache = {}
@@ -127,8 +125,8 @@ class CheXpertDataset(Dataset):
 
         for sample in samples:
             image = sample['image'].unsqueeze(0)
-            label_disease = torch.from_numpy(sample['label_disease'])
-            label_race = torch.from_numpy(sample['protected_attribute'])
+            label_disease = torch.tensor(sample['label_disease'])
+            label_race = torch.tensor(sample['protected_attribute'])
 
             if self.do_augment:
                 image = self.augment(image)
@@ -153,8 +151,8 @@ class CheXpertDataset(Dataset):
     def getitem(self, item):
         sample = self.get_sample(item)
         image = sample['image'].unsqueeze(0)
-        label_disease = torch.from_numpy(sample['label_disease'])
-        label_race = torch.from_numpy(sample['protected_attribute'])
+        label_disease = torch.tensor(sample['label_disease'])
+        label_race = torch.tensor(sample['protected_attribute'])
 
         if self.do_augment:
             image = self.augment(image)
@@ -196,19 +194,21 @@ class CheXpertDataset(Dataset):
     def get_samples(self, item):
         np.random.seed(item)
 
+        # Sample a disease
         disease = np.random.choice(self.label_list)
         prob = self.protected_race_probs[self.protected_race_set]
-        prob = prob / np.sum(prob) #  renormalising
+        prob = prob / np.sum(prob)  # renormalising
         race = np.random.choice(
             self.protected_race_set,
             self.nsamples,
             p=prob,
         )
         
+        # Get samples for the chosen disease from the race invariant set.
+        # This allows ensures that representations for the same disease
+        # are invariant to race when trained in a fashion akin to https://arxiv.org/abs/2106.04619.
         info = []
-
         for si in range(self.nsamples):
-            # enforce invariance in diseases
             sample = np.random.choice(self.attribute_wise_samples[race[si]][disease])
 
             image = None
