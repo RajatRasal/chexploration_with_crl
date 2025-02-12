@@ -15,7 +15,7 @@ from skimage.util import img_as_ubyte
 from torch.utils.data import DataLoader, Dataset
 from stocaching import SharedCache
 from pathlib import Path
-from sampler import SamplerFactory
+# from sampler import SamplerFactory
 
 if Path("/data2/mb121/EMBED/images/png/1024x768").exists():
     embed_data_dir = "/data2/mb121/EMBED/images/png/1024x768"
@@ -88,7 +88,6 @@ class MammoDataset(Dataset):
         horizontal_flip=False,
         augmentation=False,
         cache_size=0,
-        protected_attribute=
     ):
         self.image_size = image_size
         self.image_normalization = image_normalization
@@ -446,3 +445,16 @@ class EMBEDMammoDataModule(pl.LightningDataModule):
             shuffle=False,
             num_workers=self.num_workers,
         )
+
+
+if __name__ == "__main__":
+    data = EMBEDMammoDataModule(
+        target="density",
+        csv_file="/vol/biomedic3/data/EMBED/tables/mammo-net-csv/embed-non-negative.csv",
+        image_size=(512, 384),
+        batch_alpha=0,
+        batch_size=32,
+        num_workers=4,
+    )
+    print(data.train_data.columns)
+    print(data.train_data.head())
