@@ -16,17 +16,66 @@ from sklearn.utils import shuffle
 from skimage.transform import resize
 from skimage.util import img_as_ubyte
 from torch.utils.data import DataLoader, Dataset
-from stocaching import SharedCache
 from pathlib import Path
 
 
+class GammaCorrectionTransform:
+    """Apply Gamma Correction to the image"""
+
+    def __init__(self, gamma=0.5):
+        self.gamma = self._check_input(gamma, "gammacorrection")
+
+    def _check_input(
+        self, value, name, center=1, bound=(0, float("inf")), clip_first_on_zero=True
+    ):
+        if isinstance(value, numbers.Number):
+            if value < 0:
+                raise ValueError(
+                    "If {} is a single number, it must be non negative.".format(name)
+                )
+            value = [center - float(value), center + float(value)]
+            if clip_first_on_zero:
+                value[0] = max(value[0], 0.0)
+        elif isinstance(value, (tuple, list)) and len(value) == 2:
+            if not bound[0] <= value[0] <= value[1] <= bound[1]:
+                raise ValueError("{} values should be between {}".format(name, bound))
+        else:
+            raise TypeError(
+                "{} should be a single number or a list/tuple with length 2.".format(
+                    name
+                )
+            )
+
+        # if value is 0 or (1., 1.) for gamma correction do nothing
+        if value[0] == value[1] == center:
+            value = None
+        return value
+
+    def __call__(self, img):
+        """
+        Args:
+            img (PIL Image or Tensor): Input image.
+
+        Returns:
+            PIL Image or Tensor: gamma corrected image.
+        """
+        gamma_factor = (
+            None
+            if self.gamma is None
+            else float(torch.empty(1).uniform_(self.gamma[0], self.gamma[1]))
+        )
+        if gamma_factor is not None:
+            img = TF.adjust_gamma(img, gamma_factor, gain=1)
+        return img
+
+
 class MammoDataset(Dataset):
+
     def __init__(
         self,
         data,
         image_size,
         image_normalization,
-        horizontal_flip=False,
         augmentation=False,
         use_cache=False,
         nsamples=2,
@@ -35,7 +84,6 @@ class MammoDataset(Dataset):
     ):
         self.image_size = image_size
         self.image_normalization = image_normalization
-        self.do_flip = horizontal_flip
         self.do_augment = augmentation
         self.use_cache = use_cache
         self.attribute_set = attribute_set
@@ -67,7 +115,7 @@ class MammoDataset(Dataset):
         self.views = data.view_position.to_numpy()
         self.density = data.density_label.to_numpy()
 
-        self.attribute_wise_samples = {'mlo':{}, 'cc':{}}
+        self.attribute_wise_samples = {'mlo': {}, 'cc': {}}
         self.samples = []
         self.unique_densities = []
         for idx, _ in enumerate(tqdm(range(len(self.img_paths)), desc='Loading Data')):
@@ -76,12 +124,12 @@ class MammoDataset(Dataset):
                 'study_ids': self.study_ids[idx],
                 'image_ids': self.image_ids[idx],
                 'view': self.views[idx],
-                'density': self.density[idx]
+                'density': self.density[idx],
             }
 
             if sample['view'] not in self.attribute_set:
                 continue
-                
+ 
             if density not in self.attribute_wise_samples[sample['view']]:
                 self.attribute_wise_samples[sample['view']][density] = []
                 self.unique_densities.append(density)
@@ -89,12 +137,11 @@ class MammoDataset(Dataset):
             self.attribute_wise_samples[sample['view']][sample['density']].append(sample)
             self.samples.append(sample)
 
-
         # initialize the cache
         if self.use_cache:
             self.cache = {}
 
-    def preprocess(self, image, horizontal_flip):
+    def preprocess(self, image):
         # resample
         if self.image_size != image.shape:
             image = resize(image, output_shape=self.image_size, preserve_range=True)
@@ -120,13 +167,6 @@ class MammoDataset(Dataset):
         mask = output == max_label
         image[mask == 0] = 0
 
-        # flip
-        if horizontal_flip:
-            left = np.mean(image[:, 0 : int(image.shape[1] / 2)])  # noqa
-            right = np.mean(image[:, int(image.shape[1] / 2) : :])  # noqa
-            if left < right:
-                image = image[:, ::-1].copy()
-
         return image
 
     def __len__(self):
@@ -143,8 +183,7 @@ class MammoDataset(Dataset):
 
         if image is None:
             image = imread(img_path).astype(np.float32)
-            horizontal_flip = self.do_flip
-            image = self.preprocess(image, horizontal_flip)
+            image = self.preprocess(image)
             image = torch.from_numpy(image).unsqueeze(0)
 
             if self.use_cache:
@@ -154,7 +193,7 @@ class MammoDataset(Dataset):
         image = image / self.image_normalization
 
         if self.do_augment:
-            image = self.photometric_augment(image)
+            # image = self.photometric_augment(image)
             image = self.geometric_augment(image)
 
         image = image.repeat(3, 1, 1)
@@ -163,16 +202,14 @@ class MammoDataset(Dataset):
     def getitem_inv(self, index):
         np.random.seed(index)
 
-        # Sample a disease
+        # Sample a density
         density = np.random.choice(self.unique_densities)
         views = np.random.choice(
             self.attribute_wise_samples.keys(),
             self.nsamples
         )
 
-        # Get samples for the chosen disease from the race invariant set.
-        # This allows ensures that representations for the same disease
-        # are invariant to race when trained in a fashion akin to https://arxiv.org/abs/2106.04619.
+        # Get samples for the chosen density from the view invariant set.
         info = []
         for si in range(self.nsamples):
             sample = np.random.choice(self.attribute_wise_samples[views[si]][density])
@@ -202,6 +239,7 @@ class MammoDataset(Dataset):
 
 
 class EMBEDMammoDataModule(pl.LightningDataModule):
+
     def __init__(
         self,
         csv_file,
@@ -308,7 +346,6 @@ class EMBEDMammoDataModule(pl.LightningDataModule):
             data=self.train_data,
             image_size=self.image_size,
             image_normalization=65535.0,
-            horizontal_flip=True,
             augmentation=True,
             use_cache=self.use_cache,
             nsamples=self.nsamples,
@@ -319,7 +356,6 @@ class EMBEDMammoDataModule(pl.LightningDataModule):
             data=self.val_data,
             image_size=self.image_size,
             image_normalization=65535.0,
-            horizontal_flip=True,
             augmentation=False,
             use_cache=self.use_cache,
             nsamples=self.nsamples,
@@ -330,7 +366,6 @@ class EMBEDMammoDataModule(pl.LightningDataModule):
             data=self.test_data,
             image_size=self.image_size,
             image_normalization=65535.0,
-            horizontal_flip=True,
             augmentation=False,
             use_cache=self.use_cache,
             nsamples=self.nsamples,
@@ -397,9 +432,14 @@ class EMBEDMammoDataModule(pl.LightningDataModule):
 
 
 if __name__ == "__main__":
+    import os
+    from dotenv import load_dotenv
+
+    load_dotenv()
+
     data = EMBEDMammoDataModule(
-        target="density",
         csv_file="/vol/biomedic3/data/EMBED/tables/mammo-net-csv/embed-non-negative.csv",
+        data_dir=os.getenv("EMBED_FOLDER"),
         image_size=(512, 384),
         batch_alpha=0,
         batch_size=32,
