@@ -49,6 +49,7 @@ class BaseNet(ABC, pl.LightningModule):
 
     def process_batch_list(self, batch):
         img, label_class, _ = self.unpack_batch(batch)
+        img = img.transpose(0, 1); label_class = label_class.transpose(0,1)
 
         loss_class = 0
         loss_inv = 0

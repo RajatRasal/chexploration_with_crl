@@ -130,8 +130,8 @@ def main(hparams):
             image_size=image_size,
             data_dir=data_dir,
             batch_alpha=0,
-            batch_size=32,
-            num_workers=6,
+            batch_size=batch_size,
+            num_workers=num_workers,
             split_dataset=True,
             nsamples=hparams.nsamples,
             invariant_sampling=hparams.invariant_sampling,
@@ -144,8 +144,8 @@ def main(hparams):
             image_size=image_size,
             data_dir=data_dir,
             batch_alpha=0,
-            batch_size=32,
-            num_workers=6,
+            batch_size=batch_size,
+            num_workers=num_workers,
             split_dataset=True,
             nsamples=hparams.nsamples,
             invariant_sampling=hparams.invariant_sampling,
@@ -162,8 +162,8 @@ def main(hparams):
             image_size=image_size,
             data_dir=data_dir,
             batch_alpha=0,
-            batch_size=32,
-            num_workers=6,
+            batch_size=batch_size,
+            num_workers=num_workers,
             split_dataset=True,
             nsamples=hparams.nsamples,
             invariant_sampling=hparams.invariant_sampling,
@@ -179,8 +179,8 @@ def main(hparams):
             image_size=image_size,
             data_dir=data_dir,
             batch_alpha=0,
-            batch_size=32,
-            num_workers=6,
+            batch_size=batch_size,
+            num_workers=num_workers,
             split_dataset=True,
             nsamples=hparams.nsamples,
             invariant_sampling=hparams.invariant_sampling,
@@ -203,7 +203,7 @@ def main(hparams):
         sample = data_train.val_set.get_sample(idx)
         imsave(
             os.path.join(temp_dir, 'sample_' + str(idx) + '.png'),
-            sample['image'].numpy().astype(np.uint8),
+            (255*sample['image']).numpy().astype(np.uint8),
         )
 
     # Train

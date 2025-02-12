@@ -198,6 +198,7 @@ class MammoDataset(Dataset):
             image = self.geometric_augment(image)
 
         image = image.repeat(3, 1, 1)
+        # print(image.max(), image.min(), image.mean())
         return image
 
     

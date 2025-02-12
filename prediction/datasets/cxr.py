@@ -50,9 +50,11 @@ class CXRDataset(Dataset):
                 self.attribute_wise_samples[race] = {}
                 protected_race_counts[race] = np.sum(1. * (self.data['race_label'].values == race))
 
-            protected_race_probs = 1. / protected_race_counts
 
-            self.protected_race_probs = protected_race_probs / np.sum(protected_race_probs)
+            # TODO: to make sure it is similar to non-invariant training
+            # protected_race_probs = 1. / protected_race_counts
+
+            self.protected_race_probs = protected_race_counts / np.sum(protected_race_counts)
 
             self.label_list = []
 
@@ -86,6 +88,17 @@ class CXRDataset(Dataset):
 
                 if disease_key not in self.label_list:
                     self.label_list.append(disease_key)
+
+        
+        if self.invariant_sampling:
+            self.label_count = {}
+            print (self.label_list)
+            print (self.attribute_wise_samples.keys())
+            for race in self.attribute_wise_samples.keys():
+                for disease in self.attribute_wise_samples[race].keys():
+                    print(race, disease, len(self.attribute_wise_samples[race][disease]))
+                    self.label_count[disease] = len(self.attribute_wise_samples[race][disease])
+
 
         if self.use_cache:
             self.cache = {}
@@ -169,7 +182,11 @@ class CXRDataset(Dataset):
         np.random.seed(item)
 
         # Sample a disease
-        disease = np.random.choice(self.label_list)
+        disease = np.random.choice(
+            np.array(list(self.label_count.keys())),
+            1,
+            p=np.array(list(self.label_count.values())) / np.sum(np.array(list(self.label_count.values())))
+        )[0]
         prob = self.protected_race_probs[self.protected_race_set]
         prob = prob / np.sum(prob)  # renormalising
         race = np.random.choice(
@@ -198,7 +215,7 @@ class CXRDataset(Dataset):
             info.append({
                 'image': image, 
                 'label': sample['label'], 
-                'label': sample['invariant_attribute'],
+                'invariant_attribute': sample['invariant_attribute'],
             })  
         return info
 

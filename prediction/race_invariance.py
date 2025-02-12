@@ -22,7 +22,7 @@ from prediction.metrics import compute_metrics
 
 load_dotenv()
 
-image_size = (224, 224)
+image_size = (64, 64)
 num_classes_disease = 2
 batch_size = 32
 epochs = 25
@@ -140,7 +140,7 @@ def main(hparams):
             num_workers=num_workers,
             nsamples=hparams.nsamples,
             invariant_sampling=hparams.invariant_sampling,
-            use_cache=False,
+            use_cache=True,
             protected_race_set_train=hparams.protected_race_set_train,
             protected_race_set_test=hparams.protected_race_set_train,
         )
@@ -174,7 +174,7 @@ def main(hparams):
             num_workers=num_workers,
             nsamples=hparams.nsamples,
             invariant_sampling=hparams.invariant_sampling,
-            use_cache=False,
+            use_cache=True,
             protected_race_set_train=hparams.protected_race_set_train,
             protected_race_set_test=hparams.protected_race_set_test,
         )
