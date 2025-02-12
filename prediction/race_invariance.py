@@ -110,7 +110,7 @@ def main(hparams):
     }[hparams.model_type]
 
     model = model_type(
-        num_classes_disease=num_classes_disease,
+        num_classes=num_classes_disease,
         inv_loss_coefficient=hparams.inv_loss_coefficient,
     )
 
@@ -243,7 +243,7 @@ def main(hparams):
         model_path = trainer.checkpoint_callback.best_model_path
     model = model_type.load_from_checkpoint(
         model_path, 
-        num_classes_disease=num_classes_disease,
+        num_classes=num_classes_disease,
         inv_loss_coefficient=hparams.inv_loss_coefficient,
     )
 

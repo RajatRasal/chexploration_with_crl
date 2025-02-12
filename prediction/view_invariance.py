@@ -23,7 +23,7 @@ from prediction.metrics import compute_metrics
 load_dotenv()
 
 image_size = (224, 224)
-num_classes_density = 2
+num_classes_density = 4
 batch_size = 32
 epochs = 25
 num_workers = 4
@@ -31,7 +31,7 @@ num_workers = 4
 
 def datafiles(dataset: Literal["embed", "vindr"]):
     files = []
-    if dataset == "chexpert":
+    if dataset == "embed":
         files.append(os.getenv("EMBED_FOLDER"))
         files.append("/vol/biomedic3/data/EMBED/tables/mammo-net-csv/embed-non-negative.csv")
     else:
@@ -57,10 +57,10 @@ def test(model, data_loader, device, test_run):
             img, label, invariant_attribute = batch['image'].to(device), batch['label'].to(device), batch['invariant_attribute'].to(device)
             embedding, out_density = model(img)
 
-            pred = torch.softmax(out_density)
+            pred = torch.softmax(out_density, dim=-1)
 
             logits_density.append(out_density)
-            preds_density.append(torch.argmax(pred))
+            preds_density.append(torch.argmax(pred, -1))
             targets_density.append(label)
 
             embeddings.append(embedding)
@@ -110,7 +110,7 @@ def main(hparams):
     }[hparams.model_type]
 
     model = model_type(
-        num_classes_density=num_classes_density,
+        num_classes=num_classes_density,
         inv_loss_coefficient=hparams.inv_loss_coefficient,
     )
 
@@ -120,10 +120,10 @@ def main(hparams):
 
     # Setup datasets
     # Train set
-    csv_file, data_dir = datafiles(hparams.dataset_train)
+    data_dir, csv_file = datafiles(hparams.dataset_train)
     if hparams.dataset_train == hparams.dataset_test:
         # Attribute_transfer - train with protected_race_set_train test with protected_race_set_test
-        out_dir = f'{logdir}/{model_type.__name__}-{hparams.seed}/{hparams.dataset_train}/{hparams.protected_race_set_train}_{hparams.protected_race_set_test}'
+        out_dir = f'{logdir}/{model_type.__name__}-{hparams.seed}/{hparams.dataset_train}/{hparams.view_set_train}_{hparams.view_set_test}'
        
         data_train = EMBEDMammoDataModule(
             csv_file=csv_file,
@@ -173,7 +173,7 @@ def main(hparams):
         )
 
         # Alternative test set 
-        csv_file, data_dir = datafiles(hparams.dataset_test)
+        data_dir, csv_file = datafiles(hparams.dataset_test)
         data_test = EMBEDMammoDataModule(
             csv_file=csv_file,
             image_size=image_size,
@@ -202,7 +202,7 @@ def main(hparams):
     for idx in range(0, 5):
         sample = data_train.val_set.get_sample(idx)
         imsave(
-            os.path.join(temp_dir, 'sample_' + str(idx) + '.jpg'),
+            os.path.join(temp_dir, 'sample_' + str(idx) + '.png'),
             sample['image'].numpy().astype(np.uint8),
         )
 
@@ -230,7 +230,7 @@ def main(hparams):
         model_path = trainer.checkpoint_callback.best_model_path
     model = model_type.load_from_checkpoint(
         model_path, 
-        num_classes_density=num_classes_density,
+        num_classes=num_classes_density,
         inv_loss_coefficient=hparams.inv_loss_coefficient,
     )
 

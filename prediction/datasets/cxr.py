@@ -94,7 +94,7 @@ class CXRDataset(Dataset):
         return int(len(self.samples) / self.nsamples)
 
     def getitem_inv(self, item):
-        samples = self.get_sample(item)
+        samples = self.get_samples(item)
 
         images = []
         labels_disease = []
@@ -147,26 +147,23 @@ class CXRDataset(Dataset):
         return self.getitem_inv(item) if self.invariant_sampling else self.getitem(item)
         
     def get_sample(self, item):
-        if self.invariant_sampling:
-            return self.get_samples(item)
-        else:
-            sample = self.samples[item]
-            image = None
+        sample = self.samples[item]
+        image = None
 
+        if self.use_cache:
+            if sample['image_path'] in self.cache:
+                image = self.cache[sample['image_path']]
+        
+        if image is None:
+            image = self._read_image(sample['image_path'])
             if self.use_cache:
-                if sample['image_path'] in self.cache:
-                    image = self.cache[sample['image_path']]
+                self.cache[sample['image_path']] = image
             
-            if image is None:
-                image = self._read_image(sample['image_path'])
-                if self.use_cache:
-                    self.cache[sample['image_path']] = image
-                
-            return {
-                'image': image, 
-                'label': sample['label'], 
-                'invariant_attribute': sample['invariant_attribute'],
-            }
+        return {
+            'image': image, 
+            'label': sample['label'], 
+            'invariant_attribute': sample['invariant_attribute'],
+        }
 
     def get_samples(self, item):
         np.random.seed(item)

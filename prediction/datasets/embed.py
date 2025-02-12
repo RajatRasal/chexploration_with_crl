@@ -89,6 +89,7 @@ class MammoDataset(Dataset):
         self.attribute_set = attribute_set
         self.invariant_sampling = invariant_sampling
         self.nsamples = nsamples
+        self.view_mapping = {'mlo': 0, 'cc': 1}
 
         # photometric data augmentation
         self.photometric_augment = T.Compose(
@@ -130,9 +131,9 @@ class MammoDataset(Dataset):
             if sample['view'] not in self.attribute_set:
                 continue
  
-            if density not in self.attribute_wise_samples[sample['view']]:
-                self.attribute_wise_samples[sample['view']][density] = []
-                self.unique_densities.append(density)
+            if sample['density'] not in self.attribute_wise_samples[sample['view']]:
+                self.attribute_wise_samples[sample['view']][sample['density']] = []
+                self.unique_densities.append(sample['density'])
 
             self.attribute_wise_samples[sample['view']][sample['density']].append(sample)
             self.samples.append(sample)
@@ -199,7 +200,47 @@ class MammoDataset(Dataset):
         image = image.repeat(3, 1, 1)
         return image
 
-    def getitem_inv(self, index):
+    
+    def getitem_inv(self, item):
+        samples = self.get_samples(item)
+
+        images = []
+        labels = []
+        attributes = []
+
+        for sample in samples:
+            image = sample['image']
+            label = torch.tensor(sample['label'])
+            attribute = torch.tensor(self.view_mapping[sample['invariant_attribute']])
+
+            images.append(image.unsqueeze(0))
+            labels.append(label.unsqueeze(0))
+            attributes.append(attribute.unsqueeze(0))
+
+        images = torch.cat(images, 0)
+        labels_disease = torch.cat(labels, 0)
+        attributes = torch.cat(attributes, 0)
+
+        return {
+            'image': images,
+            'label': labels, 
+            'invariant_attribute': attributes,
+        }
+
+    def getitem(self, item):
+        sample = self.get_sample(item)
+        image = sample['image']
+        label = torch.tensor(sample['label'])
+        attribute = torch.tensor(self.view_mapping[sample['invariant_attribute']])
+
+        return {
+            'image': image, 
+            'label': label, 
+            'invariant_attribute': attribute,
+        }
+
+
+    def get_samples(self, index):
         np.random.seed(index)
 
         # Sample a density
@@ -223,7 +264,7 @@ class MammoDataset(Dataset):
             })  
         return info
 
-    def getitem(self, index):
+    def get_sample(self, index):
         sample = self.samples[index]
 
         image = self.get_image(sample['image_path'])
@@ -235,7 +276,7 @@ class MammoDataset(Dataset):
         }
 
     def get_labels(self):
-        return self.labels
+        return self.density
 
 
 class EMBEDMammoDataModule(pl.LightningDataModule):

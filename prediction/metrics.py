@@ -13,15 +13,20 @@ import pandas as pd
 import numpy as np
 
 def compute_metrics(df_metrics):
-    target_labels = [
-        int(col.replace("target_", ""))
-        for col in df_metrics.columns
-        if "target_" in col
-    ]
+    target_labels = []
+
+    try:
+        target_labels =[
+            int(col.replace("target_", ""))
+            for col in df_metrics.columns
+            if "target_" in col
+        ]
+    except:
+        print('Multiclass evaluation')
 
     multiclass = False
     if not target_labels:
-        target_labels = np.unique(df_metrics[f"target_{label}"].values)
+        target_labels = np.unique(df_metrics[f"target"].values)
         multiclass = True
 
     metrics = {}
@@ -33,8 +38,8 @@ def compute_metrics(df_metrics):
             preds = df_metrics[f"class"].values
             targets = df_metrics[f"target"].values
 
-            preds = preds[targets == label]
-            targets = targets[targets == label]
+            preds = 1*((preds == label) * (targets == label))
+            targets = 1*(targets == label)
             
 
         roc_auc = roc_auc_score(targets, preds)
