@@ -104,7 +104,7 @@ class CXRDataset(Dataset):
             self.cache = {}
 
     def __len__(self):
-        return int(len(self.samples) / self.nsamples)
+        return int(len(self.samples))
 
     def getitem_inv(self, item):
         samples = self.get_samples(item)

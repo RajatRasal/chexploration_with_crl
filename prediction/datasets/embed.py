@@ -131,12 +131,23 @@ class MammoDataset(Dataset):
             if sample['view'] not in self.attribute_set:
                 continue
  
-            if sample['density'] not in self.attribute_wise_samples[sample['view']]:
-                self.attribute_wise_samples[sample['view']][sample['density']] = []
-                self.unique_densities.append(sample['density'])
-
-            self.attribute_wise_samples[sample['view']][sample['density']].append(sample)
             self.samples.append(sample)
+
+            if self.invariant_sampling:
+                if sample['density'] not in self.attribute_wise_samples[sample['view']]:
+                    self.attribute_wise_samples[sample['view']][sample['density']] = []
+                    self.unique_densities.append(sample['density'])
+
+                self.attribute_wise_samples[sample['view']][sample['density']].append(sample)
+
+        if self.invariant_sampling:
+            self.label_count = {}
+            print (self.attribute_wise_samples.keys())
+            for view in self.attribute_wise_samples.keys():
+                for density in self.attribute_wise_samples[view].keys():
+                    print(view, density, len(self.attribute_wise_samples[view][density]))
+                    self.label_count[density] = len(self.attribute_wise_samples[view][density])
+
 
         # initialize the cache
         if self.use_cache:
@@ -171,7 +182,7 @@ class MammoDataset(Dataset):
         return image
 
     def __len__(self):
-        return int(len(self.samples)/self.nsamples)
+        return int(len(self.samples))
 
     def __getitem__(self, item):
         return self.getitem_inv(item) if self.invariant_sampling else self.getitem(item)
@@ -219,7 +230,7 @@ class MammoDataset(Dataset):
             attributes.append(attribute.unsqueeze(0))
 
         images = torch.cat(images, 0)
-        labels_disease = torch.cat(labels, 0)
+        labels = torch.cat(labels, 0)
         attributes = torch.cat(attributes, 0)
 
         return {
@@ -245,9 +256,14 @@ class MammoDataset(Dataset):
         np.random.seed(index)
 
         # Sample a density
-        density = np.random.choice(self.unique_densities)
+        density = np.random.choice(
+            np.array(list(self.label_count.keys())),
+            1,
+            p=np.array(list(self.label_count.values())) / np.sum(np.array(list(self.label_count.values())))
+        )[0]
+
         views = np.random.choice(
-            self.attribute_wise_samples.keys(),
+            np.array(list(self.attribute_wise_samples.keys())),
             self.nsamples
         )
 
@@ -400,8 +416,8 @@ class EMBEDMammoDataModule(pl.LightningDataModule):
             image_normalization=65535.0,
             augmentation=False,
             use_cache=self.use_cache,
-            nsamples=self.nsamples,
-            invariant_sampling=self.invariant_sampling,
+            nsamples=1,
+            invariant_sampling=False,
             attribute_set=self.view_set_test
         )
         self.test_set = MammoDataset(
@@ -410,8 +426,8 @@ class EMBEDMammoDataModule(pl.LightningDataModule):
             image_normalization=65535.0,
             augmentation=False,
             use_cache=self.use_cache,
-            nsamples=self.nsamples,
-            invariant_sampling=self.invariant_sampling,
+            nsamples=1,
+            invariant_sampling=False,
             attribute_set=self.view_set_test
         )
 

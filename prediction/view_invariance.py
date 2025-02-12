@@ -22,7 +22,7 @@ from prediction.metrics import compute_metrics
 
 load_dotenv()
 
-image_size = (224, 224)
+image_size = (128, 128)
 num_classes_density = 4
 batch_size = 32
 epochs = 25
