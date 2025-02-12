@@ -78,6 +78,7 @@ class GammaCorrectionTransform:
 
 
 class MammoDataset(Dataset):
+
     def __init__(
         self,
         data,
@@ -87,6 +88,7 @@ class MammoDataset(Dataset):
         horizontal_flip=False,
         augmentation=False,
         cache_size=0,
+        protected_attribute=
     ):
         self.image_size = image_size
         self.image_normalization = image_normalization
@@ -102,7 +104,7 @@ class MammoDataset(Dataset):
         )
 
         # geometric data augmentation
-        self.geometric_augment = T.Compose(
+        self.augment = T.Compose(
             [
                 T.RandomHorizontalFlip(p=0.5),
                 T.RandomApply(
@@ -136,7 +138,6 @@ class MammoDataset(Dataset):
         self.mask = target != "artifact"
 
     def preprocess(self, image, horizontal_flip, mask):
-
         # resample
         if self.image_size != image.shape:
             image = resize(image, output_shape=self.image_size, preserve_range=True)
@@ -162,13 +163,6 @@ class MammoDataset(Dataset):
             )
             mask = output == max_label
             image[mask == 0] = 0
-
-        # flip
-        if horizontal_flip:
-            left = np.mean(image[:, 0 : int(image.shape[1] / 2)])  # noqa
-            right = np.mean(image[:, int(image.shape[1] / 2) : :])  # noqa
-            if left < right:
-                image = image[:, ::-1].copy()
 
         return image
 
