@@ -47,14 +47,14 @@ def test(model, data_loader, device, test_run):
     preds_disease = []
     embeddings = []
     targets_disease = []
-    targets_protected_attributes = []
+    targets_invariant_attributes = []
 
     with torch.no_grad():
         for index, batch in enumerate(tqdm(data_loader, desc='Test-loop')):
             if test_run and index == 3:
                 break
 
-            img, lab_disease, protected_attribute = batch['image'].to(device), batch['label_disease'].to(device), batch['protected_attribute'].to(device)
+            img, lab_disease, invariant_attribute = batch['image'].to(device), batch['label'].to(device), batch['invariant_attribute'].to(device)
             embedding, out_disease = model(img)
 
             pred_disease = torch.sigmoid(out_disease)
@@ -64,13 +64,13 @@ def test(model, data_loader, device, test_run):
             targets_disease.append(lab_disease)
 
             embeddings.append(embedding)
-            targets_protected_attributes.append(protected_attribute)
+            targets_invariant_attributes.append(invariant_attribute)
 
         embeddings = torch.cat(embeddings, dim=0)
         logits_disease = torch.cat(logits_disease, dim=0)
         preds_disease = torch.cat(preds_disease, dim=0)
         targets_disease = torch.cat(targets_disease, dim=0)
-        targets_protected_attributes = torch.cat(targets_protected_attributes, dim=0)
+        targets_invariant_attributes = torch.cat(targets_invariant_attributes, dim=0)
 
         info = {'global': {}, 'sub-group': {}}
 
@@ -79,10 +79,10 @@ def test(model, data_loader, device, test_run):
             c = torch.sum(t).item()
             info['global'][i] = int(c)
 
-        for j in torch.unique(targets_protected_attributes):
+        for j in torch.unique(targets_invariant_attributes):
             info['sub-group'][int(j.item())] = {}
             for i in range(0, num_classes_disease):
-                t = targets_disease[targets_protected_attributes == j] == i
+                t = targets_disease[targets_invariant_attributes == j] == i
                 c = torch.sum(t).item()
                 info['sub-group'][int(j.item())][i] = int(c)
 
@@ -94,7 +94,7 @@ def test(model, data_loader, device, test_run):
         preds_disease.cpu().numpy(),
         targets_disease.cpu().numpy(),
         logits_disease.cpu().numpy(),
-        targets_protected_attributes.cpu().numpy(),
+        targets_invariant_attributes.cpu().numpy(),
     )
 
 
@@ -116,7 +116,7 @@ def main(hparams):
 
     # Create output directory
     logdir = "logs_test" if hparams.test else "logs"
-
+    logdir = f'{logdir}/race_invariance'
     # Setup datasets
     # Train set
     (
@@ -221,7 +221,7 @@ def main(hparams):
 
     # Train
     checkpoint_callback = ModelCheckpoint(
-        monitor="val_loss_disease",
+        monitor="val_loss_class",
         mode="min",
         save_last=True,
     )
@@ -260,7 +260,7 @@ def main(hparams):
             preds_disease,
             targets_disease,
             logits_disease,
-            target_protected_attributes,
+            target_invariant_attributes,
         ) = test(model, dataloader, device, hparams.test)
     
         cols_names_classes_disease = ['class_' + str(i) for i in range(0, num_classes_disease)]
@@ -270,13 +270,13 @@ def main(hparams):
         df = pd.DataFrame(data=preds_disease, columns=cols_names_classes_disease)
         df_logits = pd.DataFrame(data=logits_disease, columns=cols_names_logits_disease)
         df_targets = pd.DataFrame(data=targets_disease, columns=cols_names_targets_disease)
-        df_protected_attributes = pd.DataFrame(data=target_protected_attributes, columns=['Protected'])
-        df_preds = pd.concat([df, df_logits, df_targets, df_protected_attributes], axis=1)
+        df_invariant_attributes = pd.DataFrame(data=target_invariant_attributes, columns=['Protected'])
+        df_preds = pd.concat([df, df_logits, df_targets, df_invariant_attributes], axis=1)
 
         df_metrics = compute_metrics(df_preds)
 
         df_embed = pd.DataFrame(data=embeddings)
-        df_embed = pd.concat([df_embed, df_targets, df_protected_attributes], axis=1)
+        df_embed = pd.concat([df_embed, df_targets, df_invariant_attributes], axis=1)
         
         return info, df_preds, df_embed, df_metrics
 

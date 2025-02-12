@@ -13,6 +13,7 @@ packages = [
 [tool.poetry.scripts]
 setup_data = "datafiles.setup_data:main"
 race_invariance = "prediction.race_invariance:cli"
+view_invariance = "prediction.view_invariance:cli"
 
 [tool.poetry.dependencies]
 python = "3.12.0"

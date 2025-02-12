@@ -19,14 +19,27 @@ def compute_metrics(df_metrics):
         if "target_" in col
     ]
 
+    multiclass = False
+    if not target_labels:
+        target_labels = np.unique(df_metrics[f"target_{label}"].values)
+        multiclass = True
+
     metrics = {}
     for label in target_labels:
-        preds = df_metrics[f"class_{label}"].values
-        targets = df_metrics[f"target_{label}"].values
+        if not multiclass:
+            preds = df_metrics[f"class_{label}"].values
+            targets = df_metrics[f"target_{label}"].values
+        else:
+            preds = df_metrics[f"class"].values
+            targets = df_metrics[f"target"].values
+
+            preds = preds[targets == label]
+            targets = targets[targets == label]
+            
 
         roc_auc = roc_auc_score(targets, preds)
 
-        preds = (preds > 0.5).astype(int)
+        preds = np.round(preds).astype(int)
         targets = targets.astype(int)
 
         tn, fp, fn, tp = confusion_matrix(targets, preds).ravel()
