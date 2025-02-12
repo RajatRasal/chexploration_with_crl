@@ -16,7 +16,7 @@ from argparse import ArgumentParser
 import json
 
 from prediction.backbones import DenseNet, ResNet, ViTB16
-from prediction.datasets import CXRDataModule, CXRDataset
+from prediction.datasets.cxr import CXRDataModule, CXRDataset
 from prediction.metrics import compute_metrics
 
 
