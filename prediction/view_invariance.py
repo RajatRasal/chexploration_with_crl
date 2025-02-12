@@ -16,7 +16,7 @@ from argparse import ArgumentParser
 import json
 
 from prediction.backbones import DenseNet, ResNet, ViTB16
-from prediction.datasets import CXRDataModule, CXRDataset
+from prediction.datasets.embed import EMBEDMammoDataModule
 from prediction.metrics import compute_metrics
 
 
@@ -128,7 +128,7 @@ def main(hparams):
         data_train = EMBEDMammoDataModule(
             csv_file=csv_file,
             image_size=image_size,
-            data_dir=data_dir
+            data_dir=data_dir,
             batch_alpha=0,
             batch_size=32,
             num_workers=6,
@@ -142,7 +142,7 @@ def main(hparams):
         data_test = EMBEDMammoDataModule(
             csv_file=csv_file,
             image_size=image_size,
-            data_dir=data_dir
+            data_dir=data_dir,
             batch_alpha=0,
             batch_size=32,
             num_workers=6,
@@ -160,7 +160,7 @@ def main(hparams):
         data_train = EMBEDMammoDataModule(
             csv_file=csv_file,
             image_size=image_size,
-            data_dir=data_dir
+            data_dir=data_dir,
             batch_alpha=0,
             batch_size=32,
             num_workers=6,
@@ -177,7 +177,7 @@ def main(hparams):
         data_test = EMBEDMammoDataModule(
             csv_file=csv_file,
             image_size=image_size,
-            data_dir=data_dir
+            data_dir=data_dir,
             batch_alpha=0,
             batch_size=32,
             num_workers=6,

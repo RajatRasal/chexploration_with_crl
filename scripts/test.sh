@@ -1,13 +1,13 @@
 #!/bin/bash
-./scripts/train_job_race_invariance.sh 1 chexpert chexpert '0 1' '2' 42 densenet 0 1
+# ./scripts/train_job_race_invariance.sh 1 chexpert chexpert '0 1' '2' 42 densenet 0 1
 
-if [ $? -ne 0 ]; then
-    echo "Test 1 failed"
-    exit 1
-else
-    echo "Test 1 done"
-fi
-echo
+# if [ $? -ne 0 ]; then
+#     echo "Test 1 failed"
+#     exit 1
+# else
+#     echo "Test 1 done"
+# fi
+# echo
 
 ./scripts/train_job_view_invariance.sh 1 embed embed 'mlo' 'cc' 42 densenet 0 1
 

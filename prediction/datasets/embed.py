@@ -17,59 +17,6 @@ from skimage.transform import resize
 from skimage.util import img_as_ubyte
 from sampler import SamplerFactory
 
-
-# ======================================================
-
-class GammaCorrectionTransform:
-    """Apply Gamma Correction to the image"""
-
-    def __init__(self, gamma=0.5):
-        self.gamma = self._check_input(gamma, "gammacorrection")
-
-    def _check_input(
-        self, value, name, center=1, bound=(0, float("inf")), clip_first_on_zero=True
-    ):
-        if isinstance(value, numbers.Number):
-            if value < 0:
-                raise ValueError(
-                    "If {} is a single number, it must be non negative.".format(name)
-                )
-            value = [center - float(value), center + float(value)]
-            if clip_first_on_zero:
-                value[0] = max(value[0], 0.0)
-        elif isinstance(value, (tuple, list)) and len(value) == 2:
-            if not bound[0] <= value[0] <= value[1] <= bound[1]:
-                raise ValueError("{} values should be between {}".format(name, bound))
-        else:
-            raise TypeError(
-                "{} should be a single number or a list/tuple with length 2.".format(
-                    name
-                )
-            )
-
-        # if value is 0 or (1., 1.) for gamma correction do nothing
-        if value[0] == value[1] == center:
-            value = None
-        return value
-
-    def __call__(self, img):
-        """
-        Args:
-            img (PIL Image or Tensor): Input image.
-
-        Returns:
-            PIL Image or Tensor: gamma corrected image.
-        """
-        gamma_factor = (
-            None
-            if self.gamma is None
-            else float(torch.empty(1).uniform_(self.gamma[0], self.gamma[1]))
-        )
-        if gamma_factor is not None:
-            img = TF.adjust_gamma(img, gamma_factor, gain=1)
-        return img
-
-
 class MammoDataset(Dataset):
     def __init__(
         self,
@@ -225,13 +172,35 @@ class MammoDataset(Dataset):
             self.nsamples
         )
 
-        return DataLoader(
-            self.test_set,
-            self.batch_size,
-            shuffle=False,
-            num_workers=self.num_workers,
-        )
+        # Get samples for the chosen disease from the race invariant set.
+        # This allows ensures that representations for the same disease
+        # are invariant to race when trained in a fashion akin to https://arxiv.org/abs/2106.04619.
+        info = []
+        for si in range(self.nsamples):
+            sample = np.random.choice(self.attribute_wise_samples[views[si]][density])
 
+            image = self.get_image(sample['image_path'])
+                
+            info.append({
+                'image': image, 
+                'label': sample['density'], 
+                'invariant_attribute': sample['view'],
+            })  
+        return info
+
+    def getitem(self, index):
+        sample = self.samples[index]
+
+        image = self.get_image(sample['image_path'])
+
+        return {
+            "image": image,
+            "label": sample['density'],
+            "invariant_attribute": sample['view'],
+        }
+
+    def get_labels(self):
+        return self.labels
 
 
 class EMBEDMammoDataModule(pl.LightningDataModule):
@@ -430,4 +399,3 @@ class EMBEDMammoDataModule(pl.LightningDataModule):
             shuffle=False,
             num_workers=self.num_workers,
         )
-           
