@@ -18,7 +18,7 @@ from skimage.util import img_as_ubyte
 from torch.utils.data import DataLoader, Dataset
 from stocaching import SharedCache
 from pathlib import Path
-# from sampler import SamplerFactory
+
 
 class MammoDataset(Dataset):
     def __init__(
@@ -41,7 +41,6 @@ class MammoDataset(Dataset):
         self.attribute_set = attribute_set
         self.invariant_sampling = invariant_sampling
         self.nsamples = nsamples
-
 
         # photometric data augmentation
         self.photometric_augment = T.Compose(
@@ -67,7 +66,6 @@ class MammoDataset(Dataset):
 
         self.views = data.view_position.to_numpy()
         self.density = data.density_label.to_numpy()
-        
 
         self.attribute_wise_samples = {'mlo':{}, 'cc':{}}
         self.samples = []
@@ -95,7 +93,6 @@ class MammoDataset(Dataset):
         # initialize the cache
         if self.use_cache:
             self.cache = {}
-
 
     def preprocess(self, image, horizontal_flip):
         # resample
@@ -138,7 +135,6 @@ class MammoDataset(Dataset):
     def __getitem__(self, item):
         return self.getitem_inv(item) if self.invariant_sampling else self.getitem(item)
     
-            
     def get_image(self, img_path):
         image = None
         if self.use_cache:
@@ -163,7 +159,6 @@ class MammoDataset(Dataset):
 
         image = image.repeat(3, 1, 1)
         return image
-
 
     def getitem_inv(self, index):
         np.random.seed(index)
@@ -364,9 +359,6 @@ class EMBEDMammoDataModule(pl.LightningDataModule):
         print("samples (train): ", len(self.train_set))
         print("samples (val):   ", len(self.val_set))
         print("samples (test):  ", len(self.test_set))
-
-          
-
 
     def train_dataloader(self):
         if self.batch_alpha == 0:
