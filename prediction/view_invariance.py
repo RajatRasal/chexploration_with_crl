@@ -16,37 +16,37 @@ from argparse import ArgumentParser
 import json
 
 from prediction.backbones import DenseNet, ResNet, ViTB16
-from prediction.datasets.cxr import CXRDataModule
+from prediction.datasets.embed import EMBEDMammoDataModule
 from prediction.metrics import compute_metrics
 
 
 load_dotenv()
 
 image_size = (224, 224)
-num_classes_disease = 2
+num_classes_density = 2
 batch_size = 32
 epochs = 25
 num_workers = 4
 
 
-def datafiles(dataset: Literal["chexpert", "mimic"]):
-    files = [
-        f"datafiles/{dataset}/{dataset}.sample.{split}.csv"
-        for split in ["train", "val", "test"]
-    ]
+def datafiles(dataset: Literal["embed", "vindr"]):
+    files = []
     if dataset == "chexpert":
-        files.append(os.getenv("CHEXPERT_FOLDER"))
+        files.append(os.getenv("EMBED_FOLDER"))
+        files.append("/vol/biomedic3/data/EMBED/tables/mammo-net-csv/embed-non-negative.csv")
     else:
-        files.append(os.getenv("MIMIC_FOLDER"))
+        # TODO ---
+        files.append(os.getenv("VINDR_FOLDER"))
+        files.append("/vol/biomedic3/data/EMBED/tables/mammo-net-csv/embed-non-negative.csv")
     return files
 
 
 def test(model, data_loader, device, test_run):
     model.eval()
-    logits_disease = []
-    preds_disease = []
+    logits_density = []
+    preds_density = []
     embeddings = []
-    targets_disease = []
+    targets_density = []
     targets_invariant_attributes = []
 
     with torch.no_grad():
@@ -54,35 +54,35 @@ def test(model, data_loader, device, test_run):
             if test_run and index == 3:
                 break
 
-            img, lab_disease, invariant_attribute = batch['image'].to(device), batch['label'].to(device), batch['invariant_attribute'].to(device)
-            embedding, out_disease = model(img)
+            img, label, invariant_attribute = batch['image'].to(device), batch['label'].to(device), batch['invariant_attribute'].to(device)
+            embedding, out_density = model(img)
 
-            pred_disease = torch.sigmoid(out_disease)
+            pred = torch.softmax(out_density)
 
-            logits_disease.append(out_disease)
-            preds_disease.append(pred_disease)
-            targets_disease.append(lab_disease)
+            logits_density.append(out_density)
+            preds_density.append(torch.argmax(pred))
+            targets_density.append(label)
 
             embeddings.append(embedding)
             targets_invariant_attributes.append(invariant_attribute)
 
         embeddings = torch.cat(embeddings, dim=0)
-        logits_disease = torch.cat(logits_disease, dim=0)
-        preds_disease = torch.cat(preds_disease, dim=0)
-        targets_disease = torch.cat(targets_disease, dim=0)
+        logits_density = torch.cat(logits_density, dim=0)
+        preds_density = torch.cat(preds_density, dim=0)
+        targets_density = torch.cat(targets_density, dim=0)
         targets_invariant_attributes = torch.cat(targets_invariant_attributes, dim=0)
 
         info = {'global': {}, 'sub-group': {}}
 
-        for i in range(0, num_classes_disease):
-            t = targets_disease[:, i] == 1
+        for i in range(0, num_classes_density):
+            t = targets_density == i
             c = torch.sum(t).item()
             info['global'][i] = int(c)
 
         for j in torch.unique(targets_invariant_attributes):
             info['sub-group'][int(j.item())] = {}
-            for i in range(0, num_classes_disease):
-                t = targets_disease[targets_invariant_attributes == j] == i
+            for i in range(0, num_classes_density):
+                t = targets_density[targets_invariant_attributes == j] == i
                 c = torch.sum(t).item()
                 info['sub-group'][int(j.item())][i] = int(c)
 
@@ -91,9 +91,9 @@ def test(model, data_loader, device, test_run):
     return (
         info,
         embeddings.cpu().numpy(),
-        preds_disease.cpu().numpy(),
-        targets_disease.cpu().numpy(),
-        logits_disease.cpu().numpy(),
+        preds_density.cpu().numpy(),
+        targets_density.cpu().numpy(),
+        logits_density.cpu().numpy(),
         targets_invariant_attributes.cpu().numpy(),
     )
 
@@ -110,96 +110,83 @@ def main(hparams):
     }[hparams.model_type]
 
     model = model_type(
-        num_classes_disease=num_classes_disease,
+        num_classes_density=num_classes_density,
         inv_loss_coefficient=hparams.inv_loss_coefficient,
     )
 
     # Create output directory
     logdir = "logs_test" if hparams.test else "logs"
-    logdir = f'{logdir}/race_invariance'
+    logdir = f'{logdir}/view_invariance'
+
     # Setup datasets
     # Train set
-    (
-        csv_train_img,
-        csv_val_img,
-        csv_test_img,
-        img_data_dir,
-    ) = datafiles(hparams.dataset_train)
+    csv_file, data_dir = datafiles(hparams.dataset_train)
     if hparams.dataset_train == hparams.dataset_test:
         # Attribute_transfer - train with protected_race_set_train test with protected_race_set_test
         out_dir = f'{logdir}/{model_type.__name__}-{hparams.seed}/{hparams.dataset_train}/{hparams.protected_race_set_train}_{hparams.protected_race_set_test}'
        
-        data_train = CXRDataModule(
-            csv_train_img=csv_train_img,
-            csv_val_img=csv_val_img,
-            csv_test_img=csv_test_img,
-            img_data_dir=img_data_dir,
+        data_train = EMBEDMammoDataModule(
+            csv_file=csv_file,
             image_size=image_size,
-            pseudo_rgb=True,
-            batch_size=batch_size,
-            num_workers=num_workers,
+            data_dir=data_dir,
+            batch_alpha=0,
+            batch_size=32,
+            num_workers=6,
+            split_dataset=True,
             nsamples=hparams.nsamples,
             invariant_sampling=hparams.invariant_sampling,
             use_cache=False,
-            protected_race_set_train=hparams.protected_race_set_train,
-            protected_race_set_test=hparams.protected_race_set_train,
+            view_set_train=hparams.view_set_train,
+            view_set_test=hparams.view_set_train,
         )
-        data_test = CXRDataModule(
-            csv_train_img=csv_train_img,
-            csv_val_img=csv_val_img,
-            csv_test_img=csv_test_img,
-            img_data_dir=img_data_dir,
+        data_test = EMBEDMammoDataModule(
+            csv_file=csv_file,
             image_size=image_size,
-            pseudo_rgb=True,
-            batch_size=batch_size,
-            num_workers=num_workers,
+            data_dir=data_dir,
+            batch_alpha=0,
+            batch_size=32,
+            num_workers=6,
+            split_dataset=True,
             nsamples=hparams.nsamples,
             invariant_sampling=hparams.invariant_sampling,
             use_cache=False,
-            protected_race_set_train=hparams.protected_race_set_train,
-            protected_race_set_test=hparams.protected_race_set_test, # Different from data_train module
+            view_set_train=hparams.view_set_train,
+            view_set_test=hparams.view_set_test,
         )
     else:
         # Dataset transfer - train with data_train, test on data_test
         out_dir = f'{logdir}/{model_type.__name__}-{hparams.seed}/{hparams.dataset_train}_{hparams.dataset_test}'
        
-        data_train = CXRDataModule(
-            csv_train_img=csv_train_img,
-            csv_val_img=csv_val_img,
-            csv_test_img=csv_test_img,
-            img_data_dir=img_data_dir,
+        data_train = EMBEDMammoDataModule(
+            csv_file=csv_file,
             image_size=image_size,
-            pseudo_rgb=True,
-            batch_size=batch_size,
-            num_workers=num_workers,
+            data_dir=data_dir,
+            batch_alpha=0,
+            batch_size=32,
+            num_workers=6,
+            split_dataset=True,
             nsamples=hparams.nsamples,
             invariant_sampling=hparams.invariant_sampling,
             use_cache=False,
-            protected_race_set_train=hparams.protected_race_set_train,
-            protected_race_set_test=hparams.protected_race_set_test,
+            view_set_train=hparams.view_set_train,
+            view_set_test=hparams.view_set_test,
         )
 
         # Alternative test set 
-        (
-            test_csv_train_img,
-            test_csv_val_img,
-            test_csv_test_img,
-            test_img_data_dir,
-        ) = datafiles(hparams.dataset_test)
-        data_test = CXRDataModule(
-            csv_train_img=test_csv_train_img,
-            csv_val_img=test_csv_val_img,
-            csv_test_img=test_csv_test_img,
+        csv_file, data_dir = datafiles(hparams.dataset_test)
+        data_test = EMBEDMammoDataModule(
+            csv_file=csv_file,
             image_size=image_size,
-            img_data_dir=test_img_data_dir,
-            pseudo_rgb=True,
-            batch_size=batch_size,
-            num_workers=num_workers,
+            data_dir=data_dir,
+            batch_alpha=0,
+            batch_size=32,
+            num_workers=6,
+            split_dataset=True,
             nsamples=hparams.nsamples,
             invariant_sampling=hparams.invariant_sampling,
             use_cache=False,
-            protected_race_set_train=hparams.protected_race_set_train,
-            protected_race_set_test=hparams.protected_race_set_test,
+            view_set_train=hparams.view_set_train,
+            view_set_test=hparams.view_set_test,
         )
 
     # Set up logging dirs
@@ -243,7 +230,7 @@ def main(hparams):
         model_path = trainer.checkpoint_callback.best_model_path
     model = model_type.load_from_checkpoint(
         model_path, 
-        num_classes_disease=num_classes_disease,
+        num_classes_density=num_classes_density,
         inv_loss_coefficient=hparams.inv_loss_coefficient,
     )
 
@@ -257,19 +244,17 @@ def main(hparams):
         (
             info,
             embeddings,
-            preds_disease,
-            targets_disease,
-            logits_disease,
+            preds_density,
+            targets_density,
+            logits_density,
             target_invariant_attributes,
         ) = test(model, dataloader, device, hparams.test)
     
-        cols_names_classes_disease = ['class_' + str(i) for i in range(0, num_classes_disease)]
-        cols_names_logits_disease = ['logit_' + str(i) for i in range(0, num_classes_disease)]
-        cols_names_targets_disease = ['target_' + str(i) for i in range(0, num_classes_disease)]
+        cols_names_logits_density = ['logit_' + str(i) for i in range(0, num_classes_density)]
 
-        df = pd.DataFrame(data=preds_disease, columns=cols_names_classes_disease)
-        df_logits = pd.DataFrame(data=logits_disease, columns=cols_names_logits_disease)
-        df_targets = pd.DataFrame(data=targets_disease, columns=cols_names_targets_disease)
+        df = pd.DataFrame(data=preds_density, columns=['class'])
+        df_logits = pd.DataFrame(data=logits_density, columns=cols_names_logits_density)
+        df_targets = pd.DataFrame(data=targets_density, columns=['target'])
         df_invariant_attributes = pd.DataFrame(data=target_invariant_attributes, columns=['Protected'])
         df_preds = pd.concat([df, df_logits, df_targets, df_invariant_attributes], axis=1)
 
@@ -311,11 +296,11 @@ def cli():
     parser.add_argument('--inv-loss-coefficient', type=int, default=1)
     parser.add_argument('--invariant-sampling', action='store_true')
 
-    parser.add_argument('--protected-race-set-train', nargs='+', type=int, default=[0, 1, 2, 3])
-    parser.add_argument('--protected-race-set-test', nargs='+', type=int, default=[0, 1, 2, 3])
+    parser.add_argument('--view-set-train', nargs='+', type=str, default=['mlo','cc'])
+    parser.add_argument('--view-set-test', nargs='+', type=str, default=['mlo','cc'])
 
-    parser.add_argument('--dataset-train', choices=["mimic", "chexpert"], default="chexpert")
-    parser.add_argument('--dataset-test', choices=["mimic", "chexpert"], default="chexpert")
+    parser.add_argument('--dataset-train', choices=["embed", "vindr"], default="embed")
+    parser.add_argument('--dataset-test', choices=["embed", "vindr"], default="embed")
     parser.add_argument('--model-type', choices=["densenet", "resnet", "vitb16"], default="densenet")
 
     args = parser.parse_args()
