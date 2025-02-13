@@ -12,11 +12,12 @@ from sklearn.metrics import (
 import pandas as pd
 import numpy as np
 
+
 def compute_metrics(df_metrics):
     target_labels = []
 
     try:
-        target_labels =[
+        target_labels = [
             int(col.replace("target_", ""))
             for col in df_metrics.columns
             if "target_" in col
@@ -26,22 +27,21 @@ def compute_metrics(df_metrics):
 
     multiclass = False
     if not target_labels:
-        target_labels = np.unique(df_metrics[f"target"].values)
         multiclass = True
+        target_labels = np.unique(df_metrics[f"target"].values)
 
     metrics = {}
     for label in target_labels:
-        if not multiclass:
-            preds = df_metrics[f"class_{label}"].values
-            targets = df_metrics[f"target_{label}"].values
-        else:
+        if multiclass:
             preds = df_metrics[f"class"].values
             targets = df_metrics[f"target"].values
-
-            preds = 1*((preds == label) * (targets == label))
-            targets = 1*(targets == label)
+            # of all the targets == label, which are predicted label
+            preds = ((preds == label) * (targets == label)).astype(int)
+            targets = (targets == label).astype(int)
+        else:
+            preds = df_metrics[f"class_{label}"].values
+            targets = df_metrics[f"target_{label}"].values
             
-
         roc_auc = roc_auc_score(targets, preds)
 
         preds = np.round(preds).astype(int)

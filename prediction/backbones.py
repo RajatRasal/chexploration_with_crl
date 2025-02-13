@@ -39,7 +39,7 @@ class BaseNet(ABC, pl.LightningModule):
         img, label_class, _ = self.unpack_batch(batch)
         embedding, out_disease = self.forward(img)
 
-        if label_class.ndim==1:
+        if label_class.ndim == 1:
             loss_class = F.cross_entropy(out_disease, label_class)
         else:    
             loss_class = F.binary_cross_entropy_with_logits(out_disease, label_class)
@@ -49,15 +49,15 @@ class BaseNet(ABC, pl.LightningModule):
 
     def process_batch_list(self, batch):
         img, label_class, _ = self.unpack_batch(batch)
-        img = img.transpose(0, 1); label_class = label_class.transpose(0,1)
+        img = img.transpose(0, 1)
+        label_class = label_class.transpose(0, 1)
 
         loss_class = 0
         loss_inv = 0
         prev_embedding = None
         for i in range(img.shape[0]):  
-            embedding, out_disease = self.forward(img[i])  
-
-            if label_class[i].ndim==1:
+            embedding, out_disease = self.forward(img[i])
+            if label_class[i].ndim == 1:
                 loss_class += F.cross_entropy(out_disease, label_class[i])
             else:    
                 loss_class += F.binary_cross_entropy_with_logits(out_disease, label_class[i])
@@ -84,7 +84,7 @@ class BaseNet(ABC, pl.LightningModule):
             "train_loss_inv": loss_inv,
         })
 
-        samples = batch['image'] if not invariant_rep else batch['image'][0]
+        samples = batch['image'][0] if invariant_rep else batch['image']
         grid = torchvision.utils.make_grid(samples[0:4, ...], nrow=2, normalize=True)
         self.logger.experiment.add_image('images', grid, self.global_step)
 

@@ -4,9 +4,8 @@
 #SBATCH --job-name=invariant
 #SBATCH --output=./slurm_logs/slurm.%N.%j.log
 
-
 # Source Virtual environment (conda)
-if . "/vol/biomedic3/agk21/anaconda3/etc/profile.d/conda.sh"; then
+if [ "$(whoami)" == "agk21" ]; then
     echo "Conda environment sourced successfully."
     conda activate chexploration
     echo "Conda environment activated successfully."

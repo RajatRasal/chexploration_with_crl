@@ -22,7 +22,6 @@ from prediction.metrics import compute_metrics
 
 load_dotenv()
 
-image_size = (64, 64)
 num_classes_disease = 2
 batch_size = 32
 epochs = 25
@@ -114,9 +113,12 @@ def main(hparams):
         inv_loss_coefficient=hparams.inv_loss_coefficient,
     )
 
+    image_size = (hparams.size, hparams.size)
+
     # Create output directory
     logdir = "logs_test" if hparams.test else "logs"
-    logdir = f'{logdir}/race_invariance'
+    logdir = f'{logdir}/race_invariance_{hparams.size}'
+
     # Setup datasets
     # Train set
     (
@@ -208,18 +210,8 @@ def main(hparams):
     else:
         out_dir = os.path.join(out_dir, "non_invariant")
     os.makedirs(out_dir, exist_ok=True)
-    temp_dir = os.path.join(out_dir, 'temp')
-    os.makedirs(temp_dir, exist_ok=True)
 
-    # Sample images
-    for idx in range(0, 5):
-        sample = data_train.val_set.get_sample(idx)
-        imsave(
-            os.path.join(temp_dir, 'sample_' + str(idx) + '.jpg'),
-            sample['image'].numpy().astype(np.uint8),
-        )
-
-    # Train
+    # Trainer
     checkpoint_callback = ModelCheckpoint(
         monitor="val_loss_class",
         mode="min",
@@ -234,6 +226,19 @@ def main(hparams):
         max_steps=5 if hparams.test else -1,
     )
     trainer.logger._default_hp_metric = False
+    log_dir = trainer.log_dir
+
+    # Sample images
+    samples_dir = os.path.join(log_dir, 'samples')
+    os.makedirs(samples_dir, exist_ok=True)
+    for idx in range(0, 5):
+        sample = data_train.val_set.get_sample(idx)
+        imsave(
+            os.path.join(samples_dir, 'sample_' + str(idx) + '.jpg'),
+            sample['image'].numpy().astype(np.uint8),
+        )
+
+    # Train
     trainer.fit(model, data_train)
 
     # Test
@@ -286,13 +291,15 @@ def main(hparams):
         "ood": data_test.test_dataloader(),
     }
     def write_dfs(split: Literal["val", "test", "ood"]):
+        metrics_dir = os.path.join(log_dir, "output")
+        os.makedirs(metrics_dir, exist_ok=True)
         dl = dls[split]
         info, df_preds, df_embedding, df_metrics = output_dfs(dl)
-        with open(os.path.join(out_dir, f'count_info_{split}.json'), 'w') as f:
+        with open(os.path.join(metrics_dir, f'count_info_{split}.json'), 'w') as f:
             json.dump(info, f, indent=4)
-        df_preds.to_csv(os.path.join(out_dir, f'predictions.{split}.csv'), index=False)
-        df_embedding.to_csv(os.path.join(out_dir, f'embeddings.{split}.csv'), index=False)
-        df_metrics.to_csv(os.path.join(out_dir, f'metrics.{split}.csv'), index=False)
+        df_preds.to_csv(os.path.join(metrics_dir, f'predictions.{split}.csv'), index=False)
+        df_embedding.to_csv(os.path.join(metrics_dir, f'embeddings.{split}.csv'), index=False)
+        df_metrics.to_csv(os.path.join(metrics_dir, f'metrics.{split}.csv'), index=False)
 
     write_dfs("val")
     write_dfs("test")
@@ -307,6 +314,7 @@ def cli():
     parser.add_argument('--dev', type=int, default=0)
     parser.add_argument('--test', action="store_true")
 
+    parser.add_argument('--size', type=int, default=224)
     parser.add_argument('--nsamples', type=int, default=1)
     parser.add_argument('--inv-loss-coefficient', type=int, default=1)
     parser.add_argument('--invariant-sampling', action='store_true')

@@ -161,9 +161,7 @@ class MammoDataset(Dataset):
         # breast mask
         image_norm = image - np.min(image)
         image_norm = image_norm / np.max(image_norm)
-        thresh = cv2.threshold(img_as_ubyte(image_norm), 5, 255, cv2.THRESH_BINARY)[
-            1
-        ]
+        thresh = cv2.threshold(img_as_ubyte(image_norm), 5, 255, cv2.THRESH_BINARY)[1]
 
         # Connected components with stats.
         nb_components, output, stats, _ = cv2.connectedComponentsWithStats(
@@ -205,13 +203,11 @@ class MammoDataset(Dataset):
         image = image / self.image_normalization
 
         if self.do_augment:
-            # image = self.photometric_augment(image)
+            image = self.photometric_augment(image)
             image = self.geometric_augment(image)
 
         image = image.repeat(3, 1, 1)
-        # print(image.max(), image.min(), image.mean())
         return image
-
     
     def getitem_inv(self, item):
         samples = self.get_samples(item)
@@ -250,7 +246,6 @@ class MammoDataset(Dataset):
             'label': label, 
             'invariant_attribute': attribute,
         }
-
 
     def get_samples(self, index):
         np.random.seed(index)
