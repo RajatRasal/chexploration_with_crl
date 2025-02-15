@@ -22,7 +22,8 @@ TRAIN_ARGS="""
     --protected-race-set-train $4 \
     --protected-race-set-test $5 \
     --seed $6 \
-    --model-type $7
+    --model-type $7 \
+    --epochs ${10}
 """
 
 if [ "$8" = "1" ]; then

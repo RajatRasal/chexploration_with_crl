@@ -142,12 +142,11 @@ class MammoDataset(Dataset):
 
         if self.invariant_sampling:
             self.label_count = {}
-            print (self.attribute_wise_samples.keys())
+            print(self.attribute_wise_samples.keys())
             for view in self.attribute_wise_samples.keys():
                 for density in self.attribute_wise_samples[view].keys():
                     print(view, density, len(self.attribute_wise_samples[view][density]))
                     self.label_count[density] = len(self.attribute_wise_samples[view][density])
-
 
         # initialize the cache
         if self.use_cache:
@@ -251,11 +250,13 @@ class MammoDataset(Dataset):
         np.random.seed(index)
 
         # Sample a density
-        density = np.random.choice(
-            np.array(list(self.label_count.keys())),
-            1,
-            p=np.array(list(self.label_count.values())) / np.sum(np.array(list(self.label_count.values())))
-        )[0]
+        # density = np.random.choice(
+        #     np.array(list(self.label_count.keys())),
+        #     1,
+        #     p=np.array(list(self.label_count.values())) / np.sum(np.array(list(self.label_count.values())))
+        # )[0]
+        densities = np.array(list(self.label_count.keys()))
+        density = np.random.choice(densities, size=1)[0]
 
         views = np.random.choice(
             np.array(list(self.attribute_wise_samples.keys())),

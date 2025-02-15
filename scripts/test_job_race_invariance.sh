@@ -1,9 +1,7 @@
 #!/bin/bash
-#SBATCH -p gpus48
-#SBATCH --nodelist=mira01,loki 
-#SBATCH --gres=gpu:1
+#SBATCH -p gpus24,gpus48
+#SBATCH --gres gpu:1
 #SBATCH --job-name=invariant
-#SBATCH --nodes=1
 #SBATCH --output=./slurm_logs/slurm.%N.%j.log
 
 # Source Virtual environment (conda)
@@ -21,10 +19,11 @@ TRAIN_ARGS="""
     --inv-loss-coefficient 1 \
     --dataset-train $2 \
     --dataset-test $3 \
-    --view-set-train $4 \
-    --view-set-test $5 \
+    --protected-race-set-train $4 \
+    --protected-race-set-test $5 \
     --seed $6 \
-    --model-type $7
+    --model-type $7 \
+    --version ${10}
 """
 
 if [ "$8" = "1" ]; then
@@ -35,7 +34,7 @@ if [ "$9" = "1" ]; then
     TRAIN_ARGS="$TRAIN_ARGS --test"
 fi
 
-TRAIN_CMD="poetry run view_invariance $TRAIN_ARGS"
+TRAIN_CMD="poetry run race_invariance_test $TRAIN_ARGS"
 echo $TRAIN_CMD
 
 eval $TRAIN_CMD

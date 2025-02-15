@@ -24,6 +24,7 @@ load_dotenv()
 
 num_classes_disease = 2
 batch_size = 32
+epochs = 25
 num_workers = 4
 
 
@@ -141,7 +142,7 @@ def main(hparams):
             num_workers=num_workers,
             nsamples=hparams.nsamples,
             invariant_sampling=hparams.invariant_sampling,
-            use_cache=False,
+            use_cache=True,
             protected_race_set_train=hparams.protected_race_set_train,
             protected_race_set_test=hparams.protected_race_set_train,
         )
@@ -175,7 +176,7 @@ def main(hparams):
             num_workers=num_workers,
             nsamples=hparams.nsamples,
             invariant_sampling=hparams.invariant_sampling,
-            use_cache=False,
+            use_cache=True,
             protected_race_set_train=hparams.protected_race_set_train,
             protected_race_set_test=hparams.protected_race_set_test,
         )
@@ -210,43 +211,10 @@ def main(hparams):
         out_dir = os.path.join(out_dir, "non_invariant")
     os.makedirs(out_dir, exist_ok=True)
 
-    # Trainer
-    checkpoint_callback = ModelCheckpoint(
-        monitor="val_loss_class",
-        mode="min",
-        save_last=True,
-    )
-    trainer = pl.Trainer(
-        callbacks=[checkpoint_callback],
-        log_every_n_steps=5,
-        max_epochs=hparams.epochs,
-        devices=hparams.gpus,
-        logger=TensorBoardLogger(out_dir),
-        max_steps=5 if hparams.test else -1,
-    )
-    trainer.logger._default_hp_metric = False
-    log_dir = trainer.log_dir
-
-    # Sample images
-    samples_dir = os.path.join(log_dir, 'samples')
-    os.makedirs(samples_dir, exist_ok=True)
-    for idx in range(0, 5):
-        sample = data_train.val_set.get_sample(idx)
-        imsave(
-            os.path.join(samples_dir, 'sample_' + str(idx) + '.jpg'),
-            sample['image'].numpy().astype(np.uint8),
-        )
-
-    # Train
-    trainer.fit(model, data_train)
-
     # Test
-    if hparams.test:
-        model_path = trainer.checkpoint_callback.last_model_path
-    else:
-        model_path = trainer.checkpoint_callback.best_model_path
+    log_dir = os.path.join(out_dir, "lightning_logs", f"version_{hparams.version}")
     model = model_type.load_from_checkpoint(
-        model_path, 
+        os.path.join(log_dir, "checkpoints/last.ckpt"),
         num_classes=num_classes_disease,
         inv_loss_coefficient=hparams.inv_loss_coefficient,
     )
@@ -290,7 +258,7 @@ def main(hparams):
         "ood": data_test.test_dataloader(),
     }
     def write_dfs(split: Literal["val", "test", "ood"]):
-        metrics_dir = os.path.join(log_dir, "output")
+        metrics_dir = os.path.join(log_dir, "output_last")
         os.makedirs(metrics_dir, exist_ok=True)
         dl = dls[split]
         info, df_preds, df_embedding, df_metrics = output_dfs(dl)
@@ -313,7 +281,7 @@ def cli():
     parser.add_argument('--dev', type=int, default=0)
     parser.add_argument('--test', action="store_true")
 
-    parser.add_argument('--epochs', type=int, default=10)
+    parser.add_argument('--version', type=int, default=0)
     parser.add_argument('--size', type=int, default=224)
     parser.add_argument('--nsamples', type=int, default=1)
     parser.add_argument('--inv-loss-coefficient', type=int, default=1)

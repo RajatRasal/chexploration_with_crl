@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 from typing import Literal
 import torchvision
 from tqdm import tqdm
+from pathlib import Path
 
 from pytorch_lightning.loggers import TensorBoardLogger
 from pytorch_lightning.callbacks import ModelCheckpoint
@@ -24,17 +25,22 @@ load_dotenv()
 
 num_classes_density = 4
 batch_size = 32
-epochs = 25
+epochs = 10
 num_workers = 4
 
 
 def datafiles(dataset: Literal["embed", "vindr"]):
     files = []
     if dataset == "embed":
-        files.append(os.getenv("EMBED_FOLDER"))
+        if Path(os.getenv("EMBED_FOLDER_CLUSTER")).exists():
+            print("USING CLUSTER")
+            files.append(os.getenv("EMBED_FOLDER_CLUSTER"))
+        else:
+            print("USING LOCAL")
+            files.append(os.getenv("EMBED_FOLDER"))
         files.append("/vol/biomedic3/data/EMBED/tables/mammo-net-csv/embed-non-negative.csv")
     else:
-        # TODO ---
+        # TODO: Implement and integreate vindr dataset
         files.append(os.getenv("VINDR_FOLDER"))
         files.append("/vol/biomedic3/data/EMBED/tables/mammo-net-csv/embed-non-negative.csv")
     return files
