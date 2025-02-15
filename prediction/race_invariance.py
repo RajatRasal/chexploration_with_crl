@@ -314,7 +314,7 @@ def cli():
     parser.add_argument('--dev', type=int, default=0)
     parser.add_argument('--test', action="store_true")
 
-    parser.add_argument('--size', type=int, default=224)
+    parser.add_argument('--size', type=int, default=64)
     parser.add_argument('--nsamples', type=int, default=1)
     parser.add_argument('--inv-loss-coefficient', type=int, default=1)
     parser.add_argument('--invariant-sampling', action='store_true')

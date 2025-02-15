@@ -254,7 +254,7 @@ class MammoDataset(Dataset):
         density = np.random.choice(
             np.array(list(self.label_count.keys())),
             1,
-            p=np.array(list(self.label_count.values())) / np.sum(np.array(list(self.label_count.values())))
+            # p=np.array(list(self.label_count.values())) / np.sum(np.array(list(self.label_count.values())))
         )[0]
 
         views = np.random.choice(
