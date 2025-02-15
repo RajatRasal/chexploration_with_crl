@@ -22,7 +22,6 @@ class CXRDataset(Dataset):
         invariant_sampling=False,
         protected_race_set=[0, 1],
     ):
-
         self.data = pd.read_csv(csv_file_img)
         self.image_size = image_size
         self.do_augment = augmentation
