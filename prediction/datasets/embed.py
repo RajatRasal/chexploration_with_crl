@@ -250,11 +250,6 @@ class MammoDataset(Dataset):
         np.random.seed(index)
 
         # Sample a density
-        # density = np.random.choice(
-        #     np.array(list(self.label_count.keys())),
-        #     1,
-        #     p=np.array(list(self.label_count.values())) / np.sum(np.array(list(self.label_count.values())))
-        # )[0]
         densities = np.array(list(self.label_count.keys()))
         density = np.random.choice(densities, size=1)[0]
 

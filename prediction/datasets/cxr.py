@@ -189,7 +189,7 @@ class CXRDataset(Dataset):
         race = np.random.choice(
             self.protected_race_set,
             self.nsamples,
-            p=prob,
+            # p=prob,
         )
         
         # Get samples for the chosen disease from the race invariant set.

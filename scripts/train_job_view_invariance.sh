@@ -8,6 +8,7 @@
 
 # Source Virtual environment (conda)
 if [ "$(whoami)" == "agk21" ]; then
+    . "/vol/biomedic3/agk21/anaconda3/etc/profile.d/conda.sh"
     echo "Conda environment sourced successfully."
     conda activate chexploration
     echo "Conda environment activated successfully."
