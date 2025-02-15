@@ -25,7 +25,6 @@ load_dotenv()
 
 num_classes_density = 4
 batch_size = 32
-epochs = 10
 num_workers = 4
 
 
@@ -212,7 +211,7 @@ def main(hparams):
     trainer = pl.Trainer(
         callbacks=[checkpoint_callback],
         log_every_n_steps=5,
-        max_epochs=epochs,
+        max_epochs=hparams.epochs,
         devices=hparams.gpus,
         logger=TensorBoardLogger(out_dir),
         max_steps=5 if hparams.test else -1,
@@ -304,6 +303,7 @@ def cli():
     parser.add_argument('--dev', type=int, default=0)
     parser.add_argument('--test', action="store_true")
 
+    parser.add_argument('--epochs', type=int, default=20)
     parser.add_argument('--size', type=int, default=224)
     parser.add_argument('--nsamples', type=int, default=1)
     parser.add_argument('--inv-loss-coefficient', type=int, default=1)

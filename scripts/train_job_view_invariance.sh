@@ -2,7 +2,7 @@
 #SBATCH -p gpus48
 #SBATCH --nodelist=mira01,loki 
 #SBATCH --gres=gpu:1
-#SBATCH --job-name=invariant
+#SBATCH --job-name=breast_invariant
 #SBATCH --nodes=1
 #SBATCH --output=./slurm_logs/slurm.%N.%j.log
 
@@ -25,7 +25,8 @@ TRAIN_ARGS="""
     --view-set-train $4 \
     --view-set-test $5 \
     --seed $6 \
-    --model-type $7
+    --model-type $7 \
+    --epochs ${10}
 """
 
 if [ "$8" = "1" ]; then

@@ -177,20 +177,11 @@ class CXRDataset(Dataset):
         np.random.seed(item)
 
         # Sample a disease
-        # disease = np.random.choice(
-        #     np.array(list(self.label_count.keys())),
-        #     1,
-        #     p=np.array(list(self.label_count.values())) / np.sum(np.array(list(self.label_count.values())))
-        # )[0]
         diseases = np.array(list(self.label_count.keys()))
         disease = np.random.choice(diseases, size=1)[0]
         prob = self.protected_race_probs[self.protected_race_set]
         prob = prob / np.sum(prob)  # renormalising
-        race = np.random.choice(
-            self.protected_race_set,
-            self.nsamples,
-            # p=prob,
-        )
+        race = np.random.choice(self.protected_race_set, self.nsamples)
         
         # Get samples for the chosen disease from the race invariant set.
         # This allows ensures that representations for the same disease
