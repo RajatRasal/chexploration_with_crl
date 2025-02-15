@@ -32,7 +32,6 @@ class CXRDataset(Dataset):
         self.protected_race_set = protected_race_set
         self.nsamples = nsamples
 
-
         self.labels = ['No Finding', 'Pleural Effusion']
 
         self.augment = T.Compose([
@@ -49,7 +48,6 @@ class CXRDataset(Dataset):
             for race in np.unique(protected_race_attributes):
                 self.attribute_wise_samples[race] = {}
                 protected_race_counts[race] = np.sum(1. * (self.data['race_label'].values == race))
-
 
             # TODO: to make sure it is similar to non-invariant training
             # protected_race_probs = 1. / protected_race_counts
@@ -89,16 +87,14 @@ class CXRDataset(Dataset):
                 if disease_key not in self.label_list:
                     self.label_list.append(disease_key)
 
-        
         if self.invariant_sampling:
             self.label_count = {}
-            print (self.label_list)
-            print (self.attribute_wise_samples.keys())
+            print(self.label_list)
+            print(self.attribute_wise_samples.keys())
             for race in self.attribute_wise_samples.keys():
                 for disease in self.attribute_wise_samples[race].keys():
                     print(race, disease, len(self.attribute_wise_samples[race][disease]))
                     self.label_count[disease] = len(self.attribute_wise_samples[race][disease])
-
 
         if self.use_cache:
             self.cache = {}
@@ -182,11 +178,13 @@ class CXRDataset(Dataset):
         np.random.seed(item)
 
         # Sample a disease
-        disease = np.random.choice(
-            np.array(list(self.label_count.keys())),
-            1,
-            p=np.array(list(self.label_count.values())) / np.sum(np.array(list(self.label_count.values())))
-        )[0]
+        # disease = np.random.choice(
+        #     np.array(list(self.label_count.keys())),
+        #     1,
+        #     p=np.array(list(self.label_count.values())) / np.sum(np.array(list(self.label_count.values())))
+        # )[0]
+        diseases = np.array(list(self.label_count.keys()))
+        disease = np.random.choice(diseases, size=1)[0]
         prob = self.protected_race_probs[self.protected_race_set]
         prob = prob / np.sum(prob)  # renormalising
         race = np.random.choice(
