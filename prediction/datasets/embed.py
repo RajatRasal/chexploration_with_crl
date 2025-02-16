@@ -480,19 +480,174 @@ class EMBEDMammoDataModule(pl.LightningDataModule):
         )
 
 
+class VINDRMammoDataModule(pl.LightningDataModule):
+
+    def __init__(
+        self,
+        data_dir,
+        image_size,
+        batch_size=32,
+        num_workers=6,
+        split_dataset=True,
+        nsamples=2,
+        invariant_sampling=False,
+        use_cache=False,
+        view_set_train=['mlo', 'cc'],
+        view_set_test=['mlo', 'cc'],
+    ):
+        super().__init__()
+        self.data_dir = Path(data_dir)
+        self.image_size = image_size
+        self.batch_size = batch_size
+        self.num_workers = num_workers
+        self.invariant_sampling = invariant_sampling
+        self.nsamples = nsamples 
+        self.use_cache = use_cache
+        self.view_set_test = view_set_test
+        self.view_set_train = view_set_train
+
+        test_percent = 0.2
+        val_percent = 0.05
+
+        # Load dataset
+        df = pd.read_csv(self.data_dir / "breast-level_annotations.csv")
+        meta = pd.read_csv(self.data_dir / "metadata.csv")
+        df["img_path"] = df[["study_id", "image_id"]].apply(
+            lambda x: self.data_dir / "pngs" / x[0] / f"{x[1]}.png", axis=1
+        )
+        df["view_position"] = df.view_position.apply(lambda x: x.lower())
+        tissue_maps = {"DENSITY A": 0, "DENSITY B": 1, "DENSITY C": 2, "DENSITY D": 3}
+        df["density_label"] = df.breast_density.apply(lambda x: tissue_maps[x])
+        self.data = pd.merge(df, meta, left_on="image_id", right_on="SOP Instance UID")
+
+        # Remove unclear breast density cases
+        self.data = self.data[self.data["density_label"].notna()]
+        self.data = self.data[self.data["density_label"] < 4]
+
+        # MLO and CC only
+        self.data = self.data[self.data["view_position"].isin(["mlo", "cc"])]
+
+        self.test_percent = test_percent
+        self.val_percent = val_percent
+
+        # Split data into training, validation, and testing
+        # Making sure images from the same subject are within the same set
+        self.data["split"] = "test"
+        unique_study_ids_all = self.data.study_id.unique()
+        unique_study_ids_all = shuffle(unique_study_ids_all, random_state=33)
+        num_test = round(len(unique_study_ids_all) * self.test_percent)
+
+        dev_sub_id = unique_study_ids_all[num_test:]
+        self.data.loc[self.data.study_id.isin(dev_sub_id), "split"] = "training"
+
+        self.dev_data = self.data[self.data["split"] == "training"]
+        self.test_data = self.data[self.data["split"] == "test"]
+
+        unique_study_ids_dev = self.dev_data.study_id.unique()
+
+        unique_study_ids_dev = shuffle(unique_study_ids_dev, random_state=33)
+        num_train = round(len(unique_study_ids_dev) * (1.0 - self.val_percent))
+
+        valid_sub_id = unique_study_ids_dev[num_train:]
+        self.dev_data.loc[self.dev_data.study_id.isin(valid_sub_id), "split"] = (
+            "validation"
+        )
+
+        self.train_data = self.dev_data[self.dev_data["split"] == "training"]
+        self.val_data = self.dev_data[self.dev_data["split"] == "validation"]
+
+        self.train_set = MammoDataset(
+            data=self.train_data,
+            image_size=self.image_size,
+            image_normalization=65535.0,
+            augmentation=True,
+            use_cache=self.use_cache,
+            nsamples=self.nsamples,
+            invariant_sampling=self.invariant_sampling,
+            attribute_set=self.view_set_train
+        )
+        self.val_set = MammoDataset(
+            data=self.val_data,
+            image_size=self.image_size,
+            image_normalization=65535.0,
+            augmentation=False,
+            use_cache=self.use_cache,
+            nsamples=1,
+            invariant_sampling=False,
+            attribute_set=self.view_set_test
+        )
+        self.test_set = MammoDataset(
+            data=self.test_data,
+            image_size=self.image_size,
+            image_normalization=65535.0,
+            augmentation=False,
+            use_cache=self.use_cache,
+            nsamples=1,
+            invariant_sampling=False,
+            attribute_set=self.view_set_test
+        )
+
+        train_labels = self.train_set.get_labels()
+        val_labels = self.val_set.get_labels()
+        test_labels = self.test_set.get_labels()
+
+        print("samples (train): ", len(self.train_set))
+        print("samples (val):   ", len(self.val_set))
+        print("samples (test):  ", len(self.test_set))
+
+    def train_dataloader(self):
+        return DataLoader(
+            dataset=self.train_set,
+            batch_size=self.batch_size,
+            shuffle=True,
+            num_workers=self.num_workers,
+            pin_memory=True,
+            drop_last=True
+        )
+
+    def val_dataloader(self):
+        return DataLoader(
+            dataset=self.val_set,
+            batch_size=self.batch_size,
+            shuffle=False,
+            num_workers=self.num_workers,
+        )
+
+    def test_dataloader(self):
+        return DataLoader(
+            dataset=self.test_set,
+            batch_size=self.batch_size,
+            shuffle=False,
+            num_workers=self.num_workers,
+        )
+
+
 if __name__ == "__main__":
     import os
     from dotenv import load_dotenv
 
     load_dotenv()
 
-    data = EMBEDMammoDataModule(
-        csv_file="/vol/biomedic3/data/EMBED/tables/mammo-net-csv/embed-non-negative.csv",
-        data_dir=os.getenv("EMBED_FOLDER"),
-        image_size=(512, 384),
-        batch_alpha=0,
-        batch_size=32,
-        num_workers=4,
+    # data = EMBEDMammoDataModule(
+    #     csv_file="/vol/biomedic3/data/EMBED/tables/mammo-net-csv/embed-non-negative.csv",
+    #     data_dir=os.getenv("EMBED_FOLDER"),
+    #     image_size=(512, 384),
+    #     batch_alpha=0,
+    #     batch_size=32,
+    #     num_workers=4,
+    # )
+    # print(data.train_data.columns)
+    # print(data.train_data.head())
+
+    data = VINDRMammoDataModule(
+        data_dir=os.getenv("VINDR_FOLDER"),
+        image_size=(224, 224),
+        invariant_sampling=True,
     )
-    print(data.train_data.columns)
-    print(data.train_data.head())
+    from tqdm import tqdm
+    for x in tqdm(data.train_dataloader()):
+        pass
+    for x in tqdm(data.val_dataloader()):
+        pass
+    for x in tqdm(data.test_dataloader()):
+        pass
