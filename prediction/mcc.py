@@ -338,9 +338,9 @@ def mean_corr_coef_out_of_sample(x, y, x_test, y_test, method='pearson'):
 
 if __name__ == '__main__':
     embeddings_path = [
-        '/vol/biomedic3/rrr2417/chexploration_with_crl/logs/race_invariance_224/ResNet-42/chexpert/[0, 1]_[2]/invariant_nsamples_2/lightning_logs/version_0/output/embeddings.test.csv',
-        '/vol/biomedic3/rrr2417/chexploration_with_crl/logs/race_invariance_224/ResNet-42/chexpert/[0, 2]_[1]/invariant_nsamples_2/lightning_logs/version_0/output/embeddings.test.csv',
-        '/vol/biomedic3/rrr2417/chexploration_with_crl/logs/race_invariance_224/ResNet-42/chexpert/[2, 1]_[0]/invariant_nsamples_2/lightning_logs/version_0/output/embeddings.test.csv'
+        '/vol/biomedic3/agk21/chexploration_with_crl/logs/race_invariance_64/ResNet-42/chexpert/[0, 1]_[2]/invariant_nsamples_2/lightning_logs/version_0/output/embeddings.test.csv',
+        '/vol/biomedic3/agk21/chexploration_with_crl/logs/race_invariance_64/ResNet-43/chexpert/[0, 2]_[1]/invariant_nsamples_2/lightning_logs/version_0/output/embeddings.test.csv',
+        '/vol/biomedic3/agk21/chexploration_with_crl/logs/race_invariance_64/ResNet-44/chexpert/[2, 1]_[0]/invariant_nsamples_2/lightning_logs/version_0/output/embeddings.test.csv'
     ]
 
     embeddings = [
@@ -352,5 +352,22 @@ if __name__ == '__main__':
 
     mcc = np.mean([cca_mcc(embeddings[i-1][:1000], embeddings[i][:1000]) for i in range(1, len(embeddings))])
 
-    print(f'MCC score:{np.mean(mcc)}')
+    print(f'Invariant MCC score:{np.mean(mcc)}')
+
+    embeddings_path = [
+        '/vol/biomedic3/agk21/chexploration_with_crl/logs/race_invariance_64/ResNet-42/chexpert/[0, 1]_[2]/non_invariant/lightning_logs/version_0/output/embeddings.test.csv',
+        '/vol/biomedic3/agk21/chexploration_with_crl/logs/race_invariance_64/ResNet-43/chexpert/[0, 2]_[1]/non_invariant/lightning_logs/version_0/output/embeddings.test.csv',
+        '/vol/biomedic3/agk21/chexploration_with_crl/logs/race_invariance_64/ResNet-44/chexpert/[2, 1]_[0]/non_invariant/lightning_logs/version_0/output/embeddings.test.csv'
+    ]
+
+    embeddings = [
+        pd.read_csv(path).values[:, :-3]
+        for path in embeddings_path
+    ]
+    
+    [print(emb.shape) for emb in embeddings]
+
+    mcc = np.mean([cca_mcc(embeddings[i-1][:1000], embeddings[i][:1000]) for i in range(1, len(embeddings))])
+
+    print(f'Non-Invariant MCC score:{np.mean(mcc)}')
 

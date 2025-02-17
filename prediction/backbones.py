@@ -8,6 +8,35 @@ from torchvision import models
 import torch.nn as nn
 
 
+def compute_entropy(embeddings: torch.Tensor, reduction: str = 'none') -> torch.Tensor:
+    """
+    Compute entropy of embeddings efficiently with reduction options.
+    
+    Args:
+        embeddings (torch.Tensor): Tensor of shape (Batchsize, 512)
+        reduction (str): Specifies the reduction to apply to the output: 
+                        - 'none' (default): Returns entropy per sample (Batchsize,)
+                        - 'mean': Returns mean entropy over the batch
+                        - 'sum': Returns total entropy over the batch
+    
+    Returns:
+        torch.Tensor: Entropy value(s) based on the reduction mode.
+    """
+    # Compute log-softmax directly for numerical stability
+    log_probs = F.log_softmax(embeddings, dim=-1)
+    
+    # Compute entropy using in-place exponentiation and summation
+    entropy = -torch.sum(log_probs.exp() * log_probs, dim=-1)  # In-place exp_() for efficiency
+    
+    # Apply reduction
+    if reduction == 'mean':
+        return entropy.mean()
+    elif reduction == 'sum':
+        return entropy.sum()
+    return entropy  # 'none' (default): returns per-sample entropy
+
+
+
 class BaseNet(ABC, pl.LightningModule):
 
     def __init__(
@@ -47,6 +76,8 @@ class BaseNet(ABC, pl.LightningModule):
 
         return loss_class, loss_inv
 
+    
+
     def process_batch_list(self, batch):
         img, label_class, _ = self.unpack_batch(batch)
         img = img.transpose(0, 1)
@@ -54,18 +85,24 @@ class BaseNet(ABC, pl.LightningModule):
 
         loss_class = 0
         loss_inv = 0
+        entropy = 0
+
         prev_embedding = None
         for i in range(img.shape[0]):  
             embedding, out_disease = self.forward(img[i])
+            entropy += compute_entropy(embedding, reduction = 'mean')
+
             if label_class[i].ndim == 1:
                 loss_class += F.cross_entropy(out_disease, label_class[i])
             else:    
                 loss_class += F.binary_cross_entropy_with_logits(out_disease, label_class[i])
+            
             if prev_embedding is not None:
                 loss_inv += F.mse_loss(embedding, prev_embedding)
+
             prev_embedding = embedding
 
-        return loss_class, self.inv_loss_coefficient * loss_inv
+        return loss_class, self.inv_loss_coefficient * (loss_inv - entropy)
 
     def configure_optimizers(self):
         params_backbone = list(self.backbone.parameters())
@@ -94,9 +131,11 @@ class BaseNet(ABC, pl.LightningModule):
         optim_disease.zero_grad()
         if invariant_rep:
             optim_backbone.zero_grad()
+
         self.manual_backward(loss_class, retain_graph=True)
         if invariant_rep:
             self.manual_backward(loss_inv)
+
         optim_disease.step()
         if invariant_rep:
             optim_backbone.step()
