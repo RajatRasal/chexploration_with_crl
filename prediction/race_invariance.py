@@ -24,7 +24,7 @@ load_dotenv()
 
 num_classes_disease = 2
 batch_size = 32
-num_workers = 4
+num_workers = 8
 
 
 def datafiles(dataset: Literal["chexpert", "mimic"]):
@@ -141,7 +141,7 @@ def main(hparams):
             num_workers=num_workers,
             nsamples=hparams.nsamples,
             invariant_sampling=hparams.invariant_sampling,
-            use_cache=False,
+            use_cache=True,
             protected_race_set_train=hparams.protected_race_set_train,
             protected_race_set_test=hparams.protected_race_set_train,
         )
@@ -175,7 +175,7 @@ def main(hparams):
             num_workers=num_workers,
             nsamples=hparams.nsamples,
             invariant_sampling=hparams.invariant_sampling,
-            use_cache=False,
+            use_cache=True,
             protected_race_set_train=hparams.protected_race_set_train,
             protected_race_set_test=hparams.protected_race_set_test,
         )

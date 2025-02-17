@@ -17,7 +17,7 @@ from argparse import ArgumentParser
 import json
 
 from prediction.backbones import DenseNet, ResNet, ViTB16
-from prediction.datasets.embed import EMBEDMammoDataModule
+from prediction.datasets.embed import EMBEDMammoDataModule, VINDRMammoDataModule
 from prediction.metrics import compute_metrics
 
 
@@ -41,7 +41,8 @@ def datafiles(dataset: Literal["embed", "vindr"]):
     else:
         # TODO: Implement and integreate vindr dataset
         files.append(os.getenv("VINDR_FOLDER"))
-        files.append("/vol/biomedic3/data/EMBED/tables/mammo-net-csv/embed-non-negative.csv")
+        files.append(os.path.join(os.getenv("VINDR_FOLDER"), "breast-level_annotations.csv"))
+        # "/vol/biomedic3/data/EMBED/tables/mammo-net-csv/embed-non-negative.csv")
     return files
 
 
@@ -127,11 +128,13 @@ def main(hparams):
     # Setup datasets
     # Train set
     data_dir, csv_file = datafiles(hparams.dataset_train)
+    # Select datamodule
+    dms = {"embed": EMBEDMammoDataModule, "vindr": VINDRMammoDataModule}
     if hparams.dataset_train == hparams.dataset_test:
         # Attribute_transfer - train with protected_race_set_train test with protected_race_set_test
         out_dir = f'{logdir}/{model_type.__name__}-{hparams.seed}/{hparams.dataset_train}/{hparams.view_set_train}_{hparams.view_set_test}'
        
-        data_train = EMBEDMammoDataModule(
+        data_train = dms[hparams.dataset_train](
             csv_file=csv_file,
             image_size=image_size,
             data_dir=data_dir,
@@ -145,7 +148,7 @@ def main(hparams):
             view_set_train=hparams.view_set_train,
             view_set_test=hparams.view_set_train,
         )
-        data_test = EMBEDMammoDataModule(
+        data_test = dms[hparams.dataset_test](
             csv_file=csv_file,
             image_size=image_size,
             data_dir=data_dir,
@@ -162,8 +165,9 @@ def main(hparams):
     else:
         # Dataset transfer - train with data_train, test on data_test
         out_dir = f'{logdir}/{model_type.__name__}-{hparams.seed}/{hparams.dataset_train}_{hparams.dataset_test}'
-       
-        data_train = EMBEDMammoDataModule(
+
+        print(csv_file, data_dir)
+        data_train = dms[hparams.dataset_train](
             csv_file=csv_file,
             image_size=image_size,
             data_dir=data_dir,
@@ -180,7 +184,7 @@ def main(hparams):
 
         # Alternative test set 
         data_dir, csv_file = datafiles(hparams.dataset_test)
-        data_test = EMBEDMammoDataModule(
+        data_test = dms[hparams.dataset_test](
             csv_file=csv_file,
             image_size=image_size,
             data_dir=data_dir,

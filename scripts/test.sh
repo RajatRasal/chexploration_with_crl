@@ -1,5 +1,7 @@
 #!/bin/bash
-# ./scripts/train_job_race_invariance.sh 2 chexpert chexpert '0 1' '2' 42 densenet 1 1
+# ./scripts/train_job_race_invariance.sh 1 chexpert chexpert '0 1 2' '0 1 2' 42 resnet 0 0 3
+# ./scripts/train_job_race_invariance.sh 2 chexpert chexpert '0 1 2' '1' 42 resnet 1 0 5
+# ./scripts/train_job_race_invariance.sh 2 chexpert chexpert '0 1 2' '2' 42 resnet 1 0 5
 
 # if [ $? -ne 0 ]; then
 #     echo "Test 1 failed"
@@ -9,7 +11,8 @@
 # fi
 # echo
 
-./scripts/train_job_view_invariance.sh 2 embed embed 'mlo cc' 'cc' 42 densenet 1 1
+./scripts/train_job_view_invariance.sh 2 embed vindr 'mlo cc' 'mlo cc' 42 resnet 1 1 5
+# ./scripts/train_job_view_invariance.sh 2 embed vindr 'mlo cc' 'mlo cc' 42 resnet 0 0 5
 
 if [ $? -ne 0 ]; then
     echo "Test 1 failed"
@@ -70,7 +73,7 @@ echo
 # echo
 
 # ./scripts/train_job_race_invariance.sh 2 chexpert chexpert '2 1' '0' 42 resnet 1 1
-
+# 
 # if [ $? -ne 0 ]; then
 #     echo "Test 7 failed"
 #     exit 1
