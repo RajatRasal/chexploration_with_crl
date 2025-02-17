@@ -17,7 +17,7 @@ from argparse import ArgumentParser
 import json
 
 from prediction.backbones import DenseNet, ResNet, ViTB16
-from prediction.datasets.embed import EMBEDMammoDataModule
+from prediction.datasets.embed import EMBEDMammoDataModule, VINDRMammoDataModule
 from prediction.metrics import compute_metrics
 
 
@@ -131,69 +131,124 @@ def main(hparams):
         # Attribute_transfer - train with protected_race_set_train test with protected_race_set_test
         out_dir = f'{logdir}/{model_type.__name__}-{hparams.seed}/{hparams.dataset_train}/{hparams.view_set_train}_{hparams.view_set_test}'
        
-        data_train = EMBEDMammoDataModule(
-            csv_file=csv_file,
-            image_size=image_size,
-            data_dir=data_dir,
-            batch_alpha=0,
-            batch_size=batch_size,
-            num_workers=num_workers,
-            split_dataset=True,
-            nsamples=hparams.nsamples,
-            invariant_sampling=hparams.invariant_sampling,
-            use_cache=False,
-            view_set_train=hparams.view_set_train,
-            view_set_test=hparams.view_set_train,
-        )
-        data_test = EMBEDMammoDataModule(
-            csv_file=csv_file,
-            image_size=image_size,
-            data_dir=data_dir,
-            batch_alpha=0,
-            batch_size=batch_size,
-            num_workers=num_workers,
-            split_dataset=True,
-            nsamples=hparams.nsamples,
-            invariant_sampling=hparams.invariant_sampling,
-            use_cache=False,
-            view_set_train=hparams.view_set_train,
-            view_set_test=hparams.view_set_test,
-        )
+        if hparams.dataset_train == 'embed':
+            data_train = EMBEDMammoDataModule(
+                csv_file=csv_file,
+                image_size=image_size,
+                data_dir=data_dir,
+                batch_alpha=0,
+                batch_size=batch_size,
+                num_workers=num_workers,
+                split_dataset=True,
+                nsamples=hparams.nsamples,
+                invariant_sampling=hparams.invariant_sampling,
+                use_cache=False,
+                view_set_train=hparams.view_set_train,
+                view_set_test=hparams.view_set_train,
+            )
+            data_test = EMBEDMammoDataModule(
+                csv_file=csv_file,
+                image_size=image_size,
+                data_dir=data_dir,
+                batch_alpha=0,
+                batch_size=batch_size,
+                num_workers=num_workers,
+                split_dataset=True,
+                nsamples=hparams.nsamples,
+                invariant_sampling=hparams.invariant_sampling,
+                use_cache=False,
+                view_set_train=hparams.view_set_train,
+                view_set_test=hparams.view_set_test,
+            )
+        else:
+            data_train = VINDRMammoDataModule(
+                image_size=image_size,
+                data_dir=data_dir,
+                batch_size=batch_size,
+                num_workers=num_workers,
+                split_dataset=True,
+                nsamples=hparams.nsamples,
+                invariant_sampling=hparams.invariant_sampling,
+                use_cache=False,
+                view_set_train=hparams.view_set_train,
+                view_set_test=hparams.view_set_train,
+            )
+            data_test = VINDRMammoDataModule(
+                image_size=image_size,
+                data_dir=data_dir,
+                batch_size=batch_size,
+                num_workers=num_workers,
+                split_dataset=True,
+                nsamples=hparams.nsamples,
+                invariant_sampling=hparams.invariant_sampling,
+                use_cache=False,
+                view_set_train=hparams.view_set_train,
+                view_set_test=hparams.view_set_test,
+            )
     else:
         # Dataset transfer - train with data_train, test on data_test
         out_dir = f'{logdir}/{model_type.__name__}-{hparams.seed}/{hparams.dataset_train}_{hparams.dataset_test}'
        
-        data_train = EMBEDMammoDataModule(
-            csv_file=csv_file,
-            image_size=image_size,
-            data_dir=data_dir,
-            batch_alpha=0,
-            batch_size=batch_size,
-            num_workers=num_workers,
-            split_dataset=True,
-            nsamples=hparams.nsamples,
-            invariant_sampling=hparams.invariant_sampling,
-            use_cache=False,
-            view_set_train=hparams.view_set_train,
-            view_set_test=hparams.view_set_test,
-        )
+        if hparams.dataset_train == 'embed':
+            data_train = EMBEDMammoDataModule(
+                csv_file=csv_file,
+                image_size=image_size,
+                data_dir=data_dir,
+                batch_alpha=0,
+                batch_size=batch_size,
+                num_workers=num_workers,
+                split_dataset=True,
+                nsamples=hparams.nsamples,
+                invariant_sampling=hparams.invariant_sampling,
+                use_cache=False,
+                view_set_train=hparams.view_set_train,
+                view_set_test=hparams.view_set_test,
+            )
+        else:
+            data_train = VINDRMammoDataModule(
+                image_size=image_size,
+                data_dir=data_dir,
+                batch_size=batch_size,
+                num_workers=num_workers,
+                split_dataset=True,
+                nsamples=hparams.nsamples,
+                invariant_sampling=hparams.invariant_sampling,
+                use_cache=False,
+                view_set_train=hparams.view_set_train,
+                view_set_test=hparams.view_set_test,
+            )
 
         # Alternative test set 
         data_dir, csv_file = datafiles(hparams.dataset_test)
-        data_test = EMBEDMammoDataModule(
-            csv_file=csv_file,
-            image_size=image_size,
-            data_dir=data_dir,
-            batch_alpha=0,
-            batch_size=batch_size,
-            num_workers=num_workers,
-            split_dataset=True,
-            nsamples=hparams.nsamples,
-            invariant_sampling=hparams.invariant_sampling,
-            use_cache=False,
-            view_set_train=hparams.view_set_train,
-            view_set_test=hparams.view_set_test,
-        )
+
+        if hparams.dataset_test == 'embed':
+            data_test = EMBEDMammoDataModule(
+                csv_file=csv_file,
+                image_size=image_size,
+                data_dir=data_dir,
+                batch_alpha=0,
+                batch_size=batch_size,
+                num_workers=num_workers,
+                split_dataset=True,
+                nsamples=hparams.nsamples,
+                invariant_sampling=hparams.invariant_sampling,
+                use_cache=False,
+                view_set_train=hparams.view_set_train,
+                view_set_test=hparams.view_set_test,
+            )
+        else:
+            data_test = VINDRMammoDataModule(
+                image_size=image_size,
+                data_dir=data_dir,
+                batch_size=batch_size,
+                num_workers=num_workers,
+                split_dataset=True,
+                nsamples=hparams.nsamples,
+                invariant_sampling=hparams.invariant_sampling,
+                use_cache=False,
+                view_set_train=hparams.view_set_train,
+                view_set_test=hparams.view_set_test,
+            )
 
     # Set up logging dirs
     if hparams.invariant_sampling:

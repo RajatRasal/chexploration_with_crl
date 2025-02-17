@@ -9,7 +9,7 @@
 # fi
 # echo
 
-./scripts/train_job_view_invariance.sh 2 embed embed 'mlo cc' 'cc' 42 densenet 1 1
+./scripts/train_job_view_invariance.sh 2 embed vindr 'mlo cc' 'cc' 42 densenet 1 1 10
 
 if [ $? -ne 0 ]; then
     echo "Test 1 failed"
