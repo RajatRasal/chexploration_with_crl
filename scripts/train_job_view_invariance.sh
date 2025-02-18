@@ -2,7 +2,7 @@
 #SBATCH -p gpus48
 #SBATCH --nodelist=mira01,loki 
 #SBATCH --gres=gpu:1
-#SBATCH --job-name=breast_invariant
+#SBATCH --job-name=view_invariant
 #SBATCH --nodes=1
 #SBATCH --output=./slurm_logs/slurm.%N.%j.log
 

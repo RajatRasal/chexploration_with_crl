@@ -484,6 +484,7 @@ class VINDRMammoDataModule(pl.LightningDataModule):
 
     def __init__(
         self,
+        csv_file,
         data_dir,
         image_size,
         batch_size=32,
@@ -494,8 +495,10 @@ class VINDRMammoDataModule(pl.LightningDataModule):
         use_cache=False,
         view_set_train=['mlo', 'cc'],
         view_set_test=['mlo', 'cc'],
+        batch_alpha=0,
     ):
         super().__init__()
+        self.csv_file = csv_file
         self.data_dir = Path(data_dir)
         self.image_size = image_size
         self.batch_size = batch_size
@@ -510,15 +513,14 @@ class VINDRMammoDataModule(pl.LightningDataModule):
         val_percent = 0.05
 
         # Load dataset
-        df = pd.read_csv(self.data_dir / "breast-level_annotations.csv")
-        meta = pd.read_csv(self.data_dir / "metadata.csv")
+        df = pd.read_csv(self.csv_file)
         df["img_path"] = df[["study_id", "image_id"]].apply(
             lambda x: self.data_dir / "pngs" / x[0] / f"{x[1]}.png", axis=1
         )
         df["view_position"] = df.view_position.apply(lambda x: x.lower())
         tissue_maps = {"DENSITY A": 0, "DENSITY B": 1, "DENSITY C": 2, "DENSITY D": 3}
         df["density_label"] = df.breast_density.apply(lambda x: tissue_maps[x])
-        self.data = pd.merge(df, meta, left_on="image_id", right_on="SOP Instance UID")
+        self.data = df
 
         # Remove unclear breast density cases
         self.data = self.data[self.data["density_label"].notna()]

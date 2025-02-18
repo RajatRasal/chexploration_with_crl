@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH -p gpus24,gpus48
 #SBATCH --gres gpu:1
-#SBATCH --job-name=invariant
+#SBATCH --job-name=race_invariant
 #SBATCH --output=./slurm_logs/slurm.%N.%j.log
 
 # Source Virtual environment (conda)

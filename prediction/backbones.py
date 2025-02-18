@@ -36,7 +36,6 @@ def compute_entropy(embeddings: torch.Tensor, reduction: str = 'none') -> torch.
     return entropy  # 'none' (default): returns per-sample entropy
 
 
-
 class BaseNet(ABC, pl.LightningModule):
 
     def __init__(
@@ -76,8 +75,6 @@ class BaseNet(ABC, pl.LightningModule):
 
         return loss_class, loss_inv
 
-    
-
     def process_batch_list(self, batch):
         img, label_class, _ = self.unpack_batch(batch)
         img = img.transpose(0, 1)
@@ -90,7 +87,7 @@ class BaseNet(ABC, pl.LightningModule):
         prev_embedding = None
         for i in range(img.shape[0]):  
             embedding, out_disease = self.forward(img[i])
-            entropy += compute_entropy(embedding, reduction = 'mean')
+            entropy += compute_entropy(embedding, reduction='mean')
 
             if label_class[i].ndim == 1:
                 loss_class += F.cross_entropy(out_disease, label_class[i])

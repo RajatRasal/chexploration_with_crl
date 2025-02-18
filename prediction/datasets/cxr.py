@@ -285,6 +285,7 @@ class CXRDataModule(pl.LightningDataModule):
             shuffle=True,
             num_workers=self.num_workers,
             drop_last=True,
+            prefetch_factor=5,
         )
 
     def val_dataloader(self):
