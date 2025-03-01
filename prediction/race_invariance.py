@@ -15,7 +15,7 @@ from argparse import ArgumentParser
 
 import json
 
-from prediction.backbones import DenseNet, ResNet, ViTB16
+from prediction.backbones import DenseNet, ResNet18, ResNet34, ResNet50, ViTB16, EfficientNetB0
 from prediction.datasets.cxr import CXRDataModule
 from prediction.metrics import compute_metrics
 
@@ -23,7 +23,6 @@ from prediction.metrics import compute_metrics
 load_dotenv()
 
 num_classes_disease = 2
-batch_size = 32
 num_workers = 8
 
 
@@ -55,10 +54,10 @@ def test(model, data_loader, device, test_run):
             img, lab_disease, invariant_attribute = batch['image'].to(device), batch['label'].to(device), batch['invariant_attribute'].to(device)
             embedding, out_disease = model(img)
 
-            pred_disease = torch.sigmoid(out_disease)
+            pred_disease = torch.softmax(out_disease, dim=-1)
 
             logits_disease.append(out_disease)
-            preds_disease.append(pred_disease)
+            preds_disease.append(torch.argmax(pred_disease, -1))
             targets_disease.append(lab_disease)
 
             embeddings.append(embedding)
@@ -73,7 +72,7 @@ def test(model, data_loader, device, test_run):
         info = {'global': {}, 'sub-group': {}}
 
         for i in range(0, num_classes_disease):
-            t = targets_disease[:, i] == 1
+            t = targets_disease == 1
             c = torch.sum(t).item()
             info['global'][i] = int(c)
 
@@ -102,9 +101,12 @@ def main(hparams):
 
     # model
     model_type = {
+        "resnet18": ResNet18,
+        "resnet34": ResNet34,
+        "resnet50": ResNet50,
         "densenet": DenseNet,
-        "resnet": ResNet,
         "vitb16": ViTB16,
+        "efficientnetb0": EfficientNetB0,
     }[hparams.model_type]
 
     model = model_type(
@@ -116,7 +118,7 @@ def main(hparams):
 
     # Create output directory
     logdir = "logs_test" if hparams.test else "logs"
-    logdir = f'{logdir}/race_invariance_{hparams.size}'
+    logdir = f'{logdir}/cxr_{hparams.invariance}_{hparams.disease.replace(" ", '_')}_{hparams.size}'
 
     # Setup datasets
     # Train set
@@ -137,13 +139,15 @@ def main(hparams):
             img_data_dir=img_data_dir,
             image_size=image_size,
             pseudo_rgb=True,
-            batch_size=batch_size,
+            batch_size=hparams.batch_size,
             num_workers=num_workers,
             nsamples=hparams.nsamples,
             invariant_sampling=hparams.invariant_sampling,
-            use_cache=True,
+            use_cache=False,
             protected_race_set_train=hparams.protected_race_set_train,
             protected_race_set_test=hparams.protected_race_set_train,
+            protected_label=hparams.invariance,
+            disease_name=hparams.disease,
         )
         data_test = CXRDataModule(
             csv_train_img=csv_train_img,
@@ -152,13 +156,15 @@ def main(hparams):
             img_data_dir=img_data_dir,
             image_size=image_size,
             pseudo_rgb=True,
-            batch_size=batch_size,
+            batch_size=hparams.batch_size,
             num_workers=num_workers,
             nsamples=hparams.nsamples,
             invariant_sampling=hparams.invariant_sampling,
             use_cache=False,
             protected_race_set_train=hparams.protected_race_set_train,
-            protected_race_set_test=hparams.protected_race_set_test, # Different from data_train module
+            protected_race_set_test=hparams.protected_race_set_test,
+            protected_label=hparams.invariance,
+            disease_name=hparams.disease,
         )
     else:
         # Dataset transfer - train with data_train, test on data_test
@@ -171,13 +177,15 @@ def main(hparams):
             img_data_dir=img_data_dir,
             image_size=image_size,
             pseudo_rgb=True,
-            batch_size=batch_size,
+            batch_size=hparams.batch_size,
             num_workers=num_workers,
             nsamples=hparams.nsamples,
             invariant_sampling=hparams.invariant_sampling,
-            use_cache=True,
+            use_cache=False,
             protected_race_set_train=hparams.protected_race_set_train,
             protected_race_set_test=hparams.protected_race_set_test,
+            protected_label=hparams.invariance,
+            disease_name=hparams.disease,
         )
 
         # Alternative test set 
@@ -194,18 +202,20 @@ def main(hparams):
             image_size=image_size,
             img_data_dir=test_img_data_dir,
             pseudo_rgb=True,
-            batch_size=batch_size,
+            batch_size=hparams.batch_size,
             num_workers=num_workers,
             nsamples=hparams.nsamples,
             invariant_sampling=hparams.invariant_sampling,
             use_cache=False,
             protected_race_set_train=hparams.protected_race_set_train,
             protected_race_set_test=hparams.protected_race_set_test,
+            protected_label=hparams.invariance,
+            disease_name=hparams.disease,
         )
 
     # Set up logging dirs
     if hparams.invariant_sampling:
-        out_dir = os.path.join(out_dir, f"invariant_nsamples_{hparams.nsamples}")
+        out_dir = os.path.join(out_dir, f"invariant_nsamples_{hparams.nsamples}_{hparams.inv_loss_coefficient}")
     else:
         out_dir = os.path.join(out_dir, "non_invariant")
     os.makedirs(out_dir, exist_ok=True)
@@ -215,6 +225,7 @@ def main(hparams):
         monitor="val_loss_class",
         mode="min",
         save_last=True,
+        every_n_train_steps=0 if hparams.test else 301,
     )
     trainer = pl.Trainer(
         callbacks=[checkpoint_callback],
@@ -223,6 +234,7 @@ def main(hparams):
         devices=hparams.gpus,
         logger=TensorBoardLogger(out_dir),
         max_steps=5 if hparams.test else -1,
+        val_check_interval=2 if hparams.test else 300,
     )
     trainer.logger._default_hp_metric = False
     log_dir = trainer.log_dir
@@ -267,13 +279,11 @@ def main(hparams):
             target_invariant_attributes,
         ) = test(model, dataloader, device, hparams.test)
     
-        cols_names_classes_disease = ['class_' + str(i) for i in range(0, num_classes_disease)]
         cols_names_logits_disease = ['logit_' + str(i) for i in range(0, num_classes_disease)]
-        cols_names_targets_disease = ['target_' + str(i) for i in range(0, num_classes_disease)]
 
-        df = pd.DataFrame(data=preds_disease, columns=cols_names_classes_disease)
+        df = pd.DataFrame(data=preds_disease, columns=["class"])
         df_logits = pd.DataFrame(data=logits_disease, columns=cols_names_logits_disease)
-        df_targets = pd.DataFrame(data=targets_disease, columns=cols_names_targets_disease)
+        df_targets = pd.DataFrame(data=targets_disease, columns=["target"])
         df_invariant_attributes = pd.DataFrame(data=target_invariant_attributes, columns=['Protected'])
         df_preds = pd.concat([df, df_logits, df_targets, df_invariant_attributes], axis=1)
 
@@ -316,15 +326,23 @@ def cli():
     parser.add_argument('--epochs', type=int, default=10)
     parser.add_argument('--size', type=int, default=224)
     parser.add_argument('--nsamples', type=int, default=1)
-    parser.add_argument('--inv-loss-coefficient', type=int, default=1)
+    parser.add_argument('--inv-loss-coefficient', type=float, default=1)
     parser.add_argument('--invariant-sampling', action='store_true')
+    parser.add_argument('--batch-size', type=int, default=32)
 
     parser.add_argument('--protected-race-set-train', nargs='+', type=int, default=[0, 1, 2, 3])
     parser.add_argument('--protected-race-set-test', nargs='+', type=int, default=[0, 1, 2, 3])
 
     parser.add_argument('--dataset-train', choices=["mimic", "chexpert"], default="chexpert")
     parser.add_argument('--dataset-test', choices=["mimic", "chexpert"], default="chexpert")
-    parser.add_argument('--model-type', choices=["densenet", "resnet", "vitb16"], default="densenet")
+    parser.add_argument(
+        '--model-type',
+        choices=["densenet", "resnet34", "resnet50", "vitb16", "resnet18", "efficientnetb0"],
+        default="densenet",
+    )
+
+    parser.add_argument('--disease', choices=["Cardiomegaly", "Pleural Effusion"], required=True)
+    parser.add_argument('--invariance', choices=["race", "view", "sex"], required=True)
 
     args = parser.parse_args()
 

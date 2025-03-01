@@ -17,14 +17,17 @@ fi
 
 TRAIN_ARGS="""
     --nsamples $1 \
-    --inv-loss-coefficient 1 \
+    --inv-loss-coefficient ${11} \
     --dataset-train $2 \
     --dataset-test $3 \
     --protected-race-set-train $4 \
     --protected-race-set-test $5 \
     --seed $6 \
     --model-type $7 \
-    --epochs ${10}
+    --epochs ${10} \
+    --batch-size ${12} \
+    --disease '${13}' \
+    --invariance ${14}
 """
 
 if [ "$8" = "1" ]; then

@@ -16,7 +16,7 @@ from argparse import ArgumentParser
 
 import json
 
-from prediction.backbones import DenseNet, ResNet, ViTB16
+from prediction.backbones import DenseNet, ResNet34, ViTB16
 from prediction.datasets.embed import EMBEDMammoDataModule, VINDRMammoDataModule
 from prediction.metrics import compute_metrics
 
@@ -110,7 +110,7 @@ def main(hparams):
     # model
     model_type = {
         "densenet": DenseNet,
-        "resnet": ResNet,
+        "resnet34": ResNet34,
         "vitb16": ViTB16,
     }[hparams.model_type]
 
@@ -318,7 +318,7 @@ def cli():
 
     parser.add_argument('--dataset-train', choices=["embed", "vindr"], default="embed")
     parser.add_argument('--dataset-test', choices=["embed", "vindr"], default="embed")
-    parser.add_argument('--model-type', choices=["densenet", "resnet", "vitb16"], default="densenet")
+    parser.add_argument('--model-type', choices=["densenet", "resnet34", "vitb16"], default="densenet")
 
     args = parser.parse_args()
 

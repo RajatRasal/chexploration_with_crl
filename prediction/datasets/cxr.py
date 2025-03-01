@@ -20,7 +20,9 @@ class CXRDataset(Dataset):
         use_cache=False,
         nsamples=2,
         invariant_sampling=False,
-        protected_race_set=[0, 1],
+        protected_race_set=[0, 1, 2],
+        protected_label="race_label",
+        disease_name="Pleural Effusion",
     ):
         self.data = pd.read_csv(csv_file_img)
         self.image_size = image_size
@@ -29,9 +31,24 @@ class CXRDataset(Dataset):
         self.invariant_sampling = invariant_sampling
         self.use_cache = use_cache
         self.protected_race_set = protected_race_set
+        self.protected_label = protected_label
         self.nsamples = nsamples
+        self.disease_name = disease_name
 
-        self.labels = ['No Finding', 'Pleural Effusion']
+        self.labels = ['No Finding', self.disease_name]
+        data_mask = ((self.data[self.labels[0]] == 1) | (self.data[self.labels[1]] == 1)) & ~((self.data[self.labels[0]] == 1) & (self.data[self.labels[1]] == 1))
+        self.data = self.data[data_mask]
+        self.data = self.data.reset_index()
+
+        sex_maps = {"Male": 0, "Female": 1}
+        self.data["sex_label"] = self.data["sex"].apply(lambda x: sex_maps[x])
+
+        view_maps = {"AP": 0, "PA": 1}
+        view_col = "ViewPosition" if "ViewPosition" in self.data.columns else "AP/PA"
+        self.data["view_label"] = self.data[view_col].apply(lambda x: view_maps[x])
+
+        labels_mask = self.data[self.disease_name] == 1
+        self.data["label"] = labels_mask.astype(int)
 
         self.augment = T.Compose([
             T.RandomHorizontalFlip(p=0.5),
@@ -40,13 +57,13 @@ class CXRDataset(Dataset):
 
         if self.invariant_sampling:
             # We have 3 races: 0, 1, 2
-            protected_race_attributes = np.unique(self.data['race_label'].values)
+            protected_race_attributes = np.unique(self.data[self.protected_label].values)
             protected_race_counts = np.ones_like(protected_race_attributes)
             self.attribute_wise_samples = {}
 
             for race in np.unique(protected_race_attributes):
                 self.attribute_wise_samples[race] = {}
-                protected_race_counts[race] = np.sum(1. * (self.data['race_label'].values == race))
+                protected_race_counts[race] = np.sum(1. * (self.data[self.protected_label].values == race))
 
             # TODO: to make sure it is similar to non-invariant training
             # protected_race_probs = 1. / protected_race_counts
@@ -59,11 +76,12 @@ class CXRDataset(Dataset):
         for idx, _ in enumerate(tqdm(range(len(self.data)), desc='Loading Data')):
             # Convert pandas rows into a dictionary which can be retrieved in __getitem__
             img_path = img_data_dir + self.data.loc[idx, 'path_preproc']
-            img_label_disease = [
-                float(self.data.loc[idx, label] == 1)
-                for label in self.labels
-            ]
-            img_label_race = int(self.data.loc[idx, 'race_label'])
+            img_label_disease = self.data.loc[idx, "label"]
+            # [
+            #     float(self.data.loc[idx, label] == 1)
+            #     for label in self.labels
+            # ]
+            img_label_race = int(self.data.loc[idx, self.protected_label])
             # Only include races in the protected race set
             if img_label_race not in self.protected_race_set:
                 continue
@@ -77,7 +95,7 @@ class CXRDataset(Dataset):
 
             if self.invariant_sampling:
                 # Build race invariant sets for the same diseases
-                disease_key = ''.join(map(str, img_label_disease))
+                disease_key = str(img_label_disease)  # ''.join(map(str, img_label_disease))
                 if disease_key not in self.attribute_wise_samples[img_label_race]:
                     self.attribute_wise_samples[img_label_race][disease_key] = []
 
@@ -120,11 +138,11 @@ class CXRDataset(Dataset):
                 image = image.repeat(3, 1, 1)
 
             images.append(image.unsqueeze(0))
-            labels_disease.append(label_disease.unsqueeze(0))
+            labels_disease.append(label_disease)  # .unsqueeze(0))
             labels_race.append(label_race.unsqueeze(0))
 
         images = torch.cat(images, 0)
-        labels_disease = torch.cat(labels_disease, 0)
+        labels_disease = torch.tensor(labels_disease)  #, 0)
         labels_race = torch.cat(labels_race, 0)
 
         return {
@@ -228,6 +246,8 @@ class CXRDataModule(pl.LightningDataModule):
         invariant_sampling=False,
         protected_race_set_train=[0, 1, 2, 3],
         protected_race_set_test=[0, 1, 2, 3],
+        protected_label="view",
+        disease_name="Pleural Effusion",
     ):
         super().__init__()
         self.csv_train_img = csv_train_img
@@ -241,6 +261,8 @@ class CXRDataModule(pl.LightningDataModule):
         self.invariant_sampling = invariant_sampling
         self.protected_race_set_train = protected_race_set_train
         self.protected_race_set_test = protected_race_set_test
+        self.protected_label = f"{protected_label}_label"
+        self.disease_name = disease_name
 
         self.train_set = CXRDataset(
             self.csv_train_img, 
@@ -252,6 +274,8 @@ class CXRDataModule(pl.LightningDataModule):
             nsamples=self.nsamples,
             invariant_sampling=self.invariant_sampling,
             protected_race_set=self.protected_race_set_train,
+            protected_label=self.protected_label,
+            disease_name=self.disease_name,
         )
         self.val_set = CXRDataset(
             self.csv_val_img, 
@@ -262,6 +286,8 @@ class CXRDataModule(pl.LightningDataModule):
             nsamples=1,
             invariant_sampling=False,
             protected_race_set=self.protected_race_set_train,
+            protected_label=self.protected_label,
+            disease_name=self.disease_name,
         )
         self.test_set = CXRDataset(
             self.csv_test_img,
@@ -272,6 +298,8 @@ class CXRDataModule(pl.LightningDataModule):
             nsamples=1,
             invariant_sampling=False,
             protected_race_set=self.protected_race_set_test,
+            protected_label=self.protected_label,
+            disease_name=self.disease_name,
         )
 
         print('#train: ', len(self.train_set))

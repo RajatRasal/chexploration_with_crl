@@ -334,8 +334,6 @@ def mean_corr_coef_out_of_sample(x, y, x_test, y_test, method='pearson'):
     return score
 
 
-
-
 if __name__ == '__main__':
     embeddings_path = [
         '/vol/biomedic3/agk21/chexploration_with_crl/logs/race_invariance_64/ResNet-42/chexpert/[0, 1]_[2]/invariant_nsamples_2/lightning_logs/version_0/output/embeddings.test.csv',

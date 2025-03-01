@@ -15,9 +15,9 @@ def compute_entropy(embeddings: torch.Tensor, reduction: str = 'none') -> torch.
     Args:
         embeddings (torch.Tensor): Tensor of shape (Batchsize, 512)
         reduction (str): Specifies the reduction to apply to the output: 
-                        - 'none' (default): Returns entropy per sample (Batchsize,)
-                        - 'mean': Returns mean entropy over the batch
-                        - 'sum': Returns total entropy over the batch
+        - 'none' (default): Returns entropy per sample (Batchsize,)
+        - 'mean': Returns mean entropy over the batch
+        - 'sum': Returns total entropy over the batch
     
     Returns:
         torch.Tensor: Entropy value(s) based on the reduction mode.
@@ -42,7 +42,7 @@ class BaseNet(ABC, pl.LightningModule):
         self,
         num_classes, 
         inv_loss_coefficient,
-        lr_backbone=0.001,
+        lr_backbone=0.0001,
         lr_disease=0.001,
     ):
         super().__init__()
@@ -68,8 +68,10 @@ class BaseNet(ABC, pl.LightningModule):
         embedding, out_disease = self.forward(img)
 
         if label_class.ndim == 1:
+            # Multi-class classification
             loss_class = F.cross_entropy(out_disease, label_class)
-        else:    
+        else:
+            # Multi-label classification
             loss_class = F.binary_cross_entropy_with_logits(out_disease, label_class)
         loss_inv = 0
 
@@ -102,11 +104,11 @@ class BaseNet(ABC, pl.LightningModule):
         return loss_class, self.inv_loss_coefficient * (loss_inv - entropy)
 
     def configure_optimizers(self):
-        params_backbone = list(self.backbone.parameters())
-        params_disease = params_backbone + list(self.fc_disease.parameters())
-        optim_backbone = torch.optim.Adam(params_backbone, lr=self.lr_backbone)
-        optim_disease = torch.optim.Adam(params_disease, lr=self.lr_disease)
-        return [optim_disease, optim_backbone]
+        optim = torch.optim.Adam([
+            {"params": self.backbone.parameters(), "lr": self.lr_backbone},
+            {"params": self.fc_disease.parameters(), "lr": self.lr_disease},
+        ])
+        return optim
 
     def training_step(self, batch, batch_idx):
         invariant_rep = batch['image'].ndim == 5
@@ -122,20 +124,11 @@ class BaseNet(ABC, pl.LightningModule):
         grid = torchvision.utils.make_grid(samples[0:4, ...], nrow=2, normalize=True)
         self.logger.experiment.add_image('images', grid, self.global_step)
 
-        # Optimise the whole network w.r.t each head separately
-        optim_disease, optim_backbone = self.optimizers()
-
-        optim_disease.zero_grad()
-        if invariant_rep:
-            optim_backbone.zero_grad()
-
-        self.manual_backward(loss_class, retain_graph=True)
-        if invariant_rep:
-            self.manual_backward(loss_inv)
-
-        optim_disease.step()
-        if invariant_rep:
-            optim_backbone.step()
+        loss = loss_class + loss_inv
+        optim = self.optimizers()
+        optim.zero_grad()
+        self.manual_backward(loss)
+        optim.step()
 
     def validation_step(self, batch, batch_idx):
         loss_class, loss_inv = self.process_batch(batch)
@@ -152,7 +145,29 @@ class BaseNet(ABC, pl.LightningModule):
         })
 
 
-class ResNet(BaseNet):
+class ResNet18(BaseNet):
+
+    def __init__(
+        self,
+        num_classes,
+        inv_loss_coefficient,
+        lr_backbone=0.001,
+        lr_disease=0.001,
+    ):
+        super().__init__(
+            num_classes,
+            inv_loss_coefficient,
+            lr_backbone,
+            lr_disease,
+        )
+        self.automatic_optimization = False  # Manual optimization needed
+        self.backbone = models.resnet18(weights='IMAGENET1K_V1')
+        num_features = self.backbone.fc.in_features
+        self.fc_disease = nn.Linear(num_features, self.num_classes)
+        self.backbone.fc = nn.Identity(num_features)
+
+
+class ResNet34(BaseNet):
 
     def __init__(
         self,
@@ -169,6 +184,28 @@ class ResNet(BaseNet):
         )
         self.automatic_optimization = False  # Manual optimization needed
         self.backbone = models.resnet34(weights='IMAGENET1K_V1')
+        num_features = self.backbone.fc.in_features
+        self.fc_disease = nn.Linear(num_features, self.num_classes)
+        self.backbone.fc = nn.Identity(num_features)
+
+
+class ResNet50(BaseNet):
+
+    def __init__(
+        self,
+        num_classes,
+        inv_loss_coefficient,
+        lr_backbone=0.001,
+        lr_disease=0.001,
+    ):
+        super().__init__(
+            num_classes,
+            inv_loss_coefficient,
+            lr_backbone,
+            lr_disease,
+        )
+        self.automatic_optimization = False  # Manual optimization needed
+        self.backbone = models.resnet50(weights='IMAGENET1K_V1')
         num_features = self.backbone.fc.in_features
         self.fc_disease = nn.Linear(num_features, self.num_classes)
         self.backbone.fc = nn.Identity(num_features)
@@ -216,3 +253,25 @@ class ViTB16(BaseNet):
         num_features = self.backbone.heads.head.in_features
         self.fc_disease = nn.Linear(num_features, self.num_classes)
         self.backbone.heads.head = nn.Identity(num_features)
+
+
+class EfficientNetB0(BaseNet):
+
+    def __init__(
+        self,
+        num_classes,
+        inv_loss_coefficient,
+        lr_backbone=0.001,
+        lr_disease=0.001,
+    ):
+        super().__init__(
+            num_classes,
+            inv_loss_coefficient,
+            lr_backbone,
+            lr_disease,
+        )
+        self.automatic_optimization = False  # Manual optimization needed
+        self.backbone = models.efficientnet_b0(weights='IMAGENET1K_V1')
+        num_features = self.backbone.classifier[1].in_features
+        self.fc_disease = nn.Linear(num_features, self.num_classes)
+        self.backbone.classifier[1] = nn.Identity(num_features)
